@@ -12,8 +12,8 @@ import java.io.File;
 public interface StartsConstants {
     String STARTS_DIRECTORY_PATH = ".starts" + File.separator;
 
-    String SUREFIRE_PLUGIN_VM = "org/apache/maven/plugin/surefire/SurefirePlugin";
-    String SUREFIRE_PLUGIN_BIN = "org.apache.maven.plugin.surefire.SurefirePlugin";
+    String SUREFIRE_PLUGIN_VM = "org/apache/maven/plugin/surefire/SurefireMojo";
+    String SUREFIRE_PLUGIN_BIN = "org.apache.maven.plugin.surefire.SurefireMojo";
 
     String ABSTRACT_SUREFIRE_MOJO_VM = "org/apache/maven/plugin/surefire/AbstractSurefireMojo";
     String ABSTRACT_SUREFIRE_MOJO_BIN = "org.apache.maven.plugin.surefire.AbstractSurefireMojo";

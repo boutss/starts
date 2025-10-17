@@ -25,22 +25,28 @@ import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.util.Logger;
 import edu.illinois.yasgl.DirectedGraph;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
+import org.apache.maven.artifact.repository.ArtifactRepository;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.surefire.AbstractSurefireMojo;
-import org.apache.maven.plugin.surefire.SurefirePlugin;
+import org.apache.maven.plugin.surefire.SurefireMojo;
 import org.apache.maven.plugin.surefire.util.DirectoryScanner;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.surefire.api.testset.TestListResolver;
+import org.apache.maven.surefire.api.util.DefaultScanResult;
 import org.apache.maven.surefire.booter.Classpath;
 import org.apache.maven.surefire.booter.SurefireExecutionException;
-import org.apache.maven.surefire.testset.TestListResolver;
-import org.apache.maven.surefire.util.DefaultScanResult;
 
 /**
  * Base MOJO for the JDeps-Based STARTS.
  */
-abstract class BaseMojo extends SurefirePlugin implements StartsConstants {
+abstract class BaseMojo extends SurefireMojo implements StartsConstants {
     static final String STAR = "*";
+
+    @Parameter(defaultValue = "${localRepository}", readonly = true, required = true)
+    protected ArtifactRepository localRepository;
+
+    protected Classpath sureFireClassPath;
     /**
      * Set this to "false" to not filter out "sun.*" and "java.*" classes from jdeps parsing.
      */
@@ -91,7 +97,6 @@ abstract class BaseMojo extends SurefirePlugin implements StartsConstants {
      */
     @Parameter(property = "startsLogging", defaultValue = "CONFIG")
     protected String loggingLevel;
-    private Classpath sureFireClassPath;
 
     protected void printResult(Set<String> set, String title) {
         Writer.writeToLog(set, title, Logger.getGlobal());
@@ -147,7 +152,7 @@ abstract class BaseMojo extends SurefirePlugin implements StartsConstants {
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] " + methodName + "(getTestClasses): "
                 + Writer.millsToSeconds(end - start));
-        return (List<String>) defaultScanResult.getFiles();
+        return defaultScanResult.getClasses();
     }
 
     public ClassLoader createClassLoader(Classpath sfClassPath) {
@@ -214,7 +219,7 @@ abstract class BaseMojo extends SurefirePlugin implements StartsConstants {
     public Result prepareForNextRun(String sfPathString, Classpath sfClassPath, List<String> classesToAnalyze,
                                     Set<String> nonAffected, boolean computeUnreached) throws MojoExecutionException {
         long start = System.currentTimeMillis();
-        String m2Repo = getLocalRepository().getBasedir();
+        String m2Repo = localRepository.getBasedir();
         File jdepsCache = new File(graphCache);
         // We store the jdk-graphs at the root of "jdepsCache" directory, with
         // jdk.graph being the file that merges all the graphs for all standard
@@ -265,8 +270,8 @@ abstract class BaseMojo extends SurefirePlugin implements StartsConstants {
 
     protected List<String> getAllClasses() {
         DirectoryScanner testScanner = new DirectoryScanner(getTestClassesDirectory(), new TestListResolver(STAR));
-        DirectoryScanner classScanner = new DirectoryScanner(getClassesDirectory(), new TestListResolver(STAR));
+        DirectoryScanner classScanner = new DirectoryScanner(new File(getProject().getBuild().getOutputDirectory()), new TestListResolver(STAR));
         DefaultScanResult scanResult = classScanner.scan().append(testScanner.scan());
-        return scanResult.getFiles();
+        return scanResult.getClasses();
     }
 }

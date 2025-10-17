@@ -11,7 +11,6 @@ import java.nio.file.Files;
 import java.util.List;
 
 import edu.illinois.starts.constants.StartsConstants;
-
 import org.junit.Assert;
 
 /**
