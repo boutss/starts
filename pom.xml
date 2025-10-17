@@ -2,7 +2,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>edu.illinois</groupId>
+  <groupId>com.efluid</groupId>
   <artifactId>starts</artifactId>
   <version>1.5-SNAPSHOT</version>
   <packaging>pom</packaging>
@@ -92,6 +92,11 @@
       <email>tj258@cornell.edu</email>
       <organization>Cornell University</organization>
     </contributor>
+  <contributor>
+      <name>Vincent Bouthinon</name>
+      <email>v-bouthinon@efluid.fr</email>
+      <organization>Efluid</organization>
+  </contributor>
   </contributors>
 
     <properties>
