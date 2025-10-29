@@ -88,9 +88,7 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
             data = EkstaziHelper.getNonAffectedTests(getArtifactsDir());
         }
         Set<String> changed = data == null ? new HashSet<String>() : data.getValue();
-        if (writeChanged || Logger.getGlobal().getLoggingLevel().intValue() <= Level.FINEST.intValue()) {
-            Writer.writeToFile(changed, CHANGED_CLASSES, getArtifactsDir());
-        }
+        Writer.writeToFile(changed, CHANGED_CLASSES, getArtifactsDir());
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] COMPUTING CHANGES: " + Writer.millsToSeconds(end - start));
         return data;
@@ -139,10 +137,8 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
     public void save(String artifactsDir, Set<String> affectedTests, List<String> testClasses,
                      String sfPathString, DirectedGraph<String> graph) {
         int globalLogLevel = Logger.getGlobal().getLoggingLevel().intValue();
-        if (globalLogLevel <= Level.FINER.intValue()) {
-            Writer.writeToFile(testClasses, "all-tests", artifactsDir);
-            Writer.writeToFile(affectedTests, "selected-tests", artifactsDir);
-        }
+        Writer.writeToFile(testClasses, "all-tests", artifactsDir);
+        Writer.writeToFile(affectedTests, "selected-tests", artifactsDir);
         if (globalLogLevel <= Level.FINEST.intValue()) {
             RTSUtil.saveForNextRun(artifactsDir, graph, printGraph, graphFile);
             Writer.writeClassPath(sfPathString, artifactsDir);

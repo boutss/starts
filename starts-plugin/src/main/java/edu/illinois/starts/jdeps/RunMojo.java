@@ -81,9 +81,7 @@ public class RunMojo extends DiffMojo implements StartsConstants {
         setIncludesExcludes();
         run();
         Set<String> allTests = new HashSet<>(getTestClasses(CHECK_IF_ALL_AFFECTED));
-        if (writeNonAffected || logger.getLoggingLevel().intValue() <= Level.FINEST.intValue()) {
-            Writer.writeToFile(nonAffectedTests, "non-affected-tests", getArtifactsDir());
-        }
+        Writer.writeToFile(nonAffectedTests, "non-affected-tests", getArtifactsDir());
         if (allTests.equals(nonAffectedTests)) {
             logger.log(Level.INFO, STARS_RUN_STARS);
             logger.log(Level.INFO, NO_TESTS_ARE_SELECTED_TO_RUN);
