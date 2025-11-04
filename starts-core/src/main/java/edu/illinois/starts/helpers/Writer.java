@@ -246,6 +246,26 @@ public class Writer implements StartsConstants {
         return String.format("%.03f", (double) value / 1000.0);
     }
 
+    public static String millsToLog(long durationMs) {
+        long millis   = durationMs % 1000;
+        long seconds  = (durationMs / 1000) % 60;
+        long minutes  = (durationMs / 60000);
+
+        StringBuilder sb = new StringBuilder();
+
+        if (minutes > 0) {
+            sb.append(minutes).append("min");
+        }
+        if (seconds > 0) {
+            sb.append(seconds).append("s");
+        }
+        if (millis > 0 || (minutes == 0 && seconds == 0)) {
+            sb.append(millis).append("ms");
+        }
+
+        return sb.toString().trim();
+    }
+
     /**
      * Compute the checksum for the given map and return the jar
      * and the checksum as a string.

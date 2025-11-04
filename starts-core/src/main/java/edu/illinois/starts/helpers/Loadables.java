@@ -7,6 +7,7 @@ package edu.illinois.starts.helpers;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -91,18 +92,18 @@ public class Loadables implements StartsConstants {
         long transitiveClosureTime = System.currentTimeMillis();
         if (computeUnreached) {
             unreached = findUnreached(deps, transitiveClosure);
-            LOGGER.log(Level.INFO, "UNREACHED(count): " + unreached.size());
+            LOGGER.log(Level.INFO, "Classes inaccessible (count): " + unreached.size());
         }
         long findUnreachedTime = System.currentTimeMillis();
         long endTime = System.currentTimeMillis();
-        LOGGER.log(Level.FINE, "[PROFILE] createLoadable(runJDeps): " + Writer.millsToSeconds(jdepsTime - startTime));
-        LOGGER.log(Level.FINE, "[PROFILE] createLoadable(buildGraph): "
-                + Writer.millsToSeconds(graphBuildingTime - jdepsTime));
-        LOGGER.log(Level.FINE, "[PROFILE] createLoadable(transitiveClosure): "
-                + Writer.millsToSeconds(transitiveClosureTime - graphBuildingTime));
-        LOGGER.log(Level.FINE, "[PROFILE] createLoadable(findUnreached): "
-                + Writer.millsToSeconds(endTime - findUnreachedTime));
-        LOGGER.log(Level.FINE, "[PROFILE] createLoadable(TOTAL): " + Writer.millsToSeconds(endTime - startTime));
+        LOGGER.log(Level.INFO, "[PROFILE] createLoadable(runJDeps): " + Writer.millsToLog(jdepsTime - startTime));
+        LOGGER.log(Level.INFO, "[PROFILE] createLoadable(buildGraph): "
+                + Writer.millsToLog(graphBuildingTime - jdepsTime));
+        LOGGER.log(Level.INFO, "[PROFILE] createLoadable(transitiveClosure): "
+                + Writer.millsToLog(transitiveClosureTime - graphBuildingTime));
+        LOGGER.log(Level.INFO, "[PROFILE] createLoadable(findUnreached): "
+                + Writer.millsToLog(endTime - findUnreachedTime));
+        LOGGER.log(Level.INFO, "[PROFILE] createLoadable(TOTAL): " + Writer.millsToLog(endTime - startTime));
         LOGGER.log(Level.INFO, "STARTS:Nodes: " + graph.getVertices().size());
         LOGGER.log(Level.INFO, "STARTS:Edges: " + graph.getEdges().size());
         return this;
@@ -132,7 +133,7 @@ public class Loadables implements StartsConstants {
                 allClasses.add(loc);
             }
         }
-        LOGGER.log(Level.INFO, "ALL(count): " + allClasses.size());
+        LOGGER.log(Level.INFO, "ALL classes(count): " + allClasses.size());
         Set<String> reached = new HashSet<>(testDeps.keySet());
         for (String test : testDeps.keySet()) {
             reached.addAll(testDeps.get(test));
@@ -187,7 +188,9 @@ public class Loadables implements StartsConstants {
         args.addAll(localPaths);
         LOGGER.log(Level.FINEST, "JDEPS CMD: " + args);
         Map<String, Set<String>> depMap = RTSUtil.runJdeps(args);
-        Writer.writeMapToFile(depMap, artifactsDir + File.separator + "jdeps-out");
+        if (LOGGER.getLoggingLevel().intValue() == Level.FINEST.intValue()) {
+            Writer.writeMapToFile(depMap, artifactsDir + File.separator + "jdeps-out");
+        }
         return depMap;
     }
 
@@ -209,7 +212,7 @@ public class Loadables implements StartsConstants {
         Map<String, Set<String>> tcPerTest = new HashMap<>();
         for (String test : classesToAnalyze) {
             Set<String> deps = YasglHelper.computeReachabilityFromChangedClasses(
-                    new HashSet<>(Arrays.asList(test)), tcGraph);
+                   Set.of(test), tcGraph);
             deps.add(test);
             tcPerTest.put(test, deps);
         }

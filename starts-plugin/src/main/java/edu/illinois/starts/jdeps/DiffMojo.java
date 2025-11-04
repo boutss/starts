@@ -48,7 +48,7 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
      * Set to "INDEXED" to store indices of tests
      * Set to "PLAIN_TEXT" to store full URLs of tests
      */
-    @Parameter(property = "zlcFormat", defaultValue = "PLAIN_TEXT")
+    @Parameter(property = "zlcFormat", defaultValue = "INDEXED")
     protected ZLCFormat zlcFormat;
 
     /**
