@@ -5,9 +5,11 @@
 package edu.illinois.starts.helpers;
 
 import java.io.File;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.BitSet;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -207,17 +209,132 @@ public class Loadables implements StartsConstants {
         }
     }
 
-    public static Map<String, Set<String>> getTransitiveClosurePerClass(DirectedGraph<String> tcGraph,
-                                                                  List<String> classesToAnalyze) {
-        Map<String, Set<String>> tcPerTest = new HashMap<>();
-        for (String test : classesToAnalyze) {
-            Set<String> deps = YasglHelper.computeReachabilityFromChangedClasses(
-                   Set.of(test), tcGraph);
-            deps.add(test);
-            tcPerTest.put(test, deps);
+    public static Map<String, Set<String>> getTransitiveClosurePerClass(
+            DirectedGraph<String> graph,
+            List<String> classesToAnalyze
+    ) {
+        // 1) Indexer les sommets
+        List<String> allVertices = new ArrayList<>(graph.getVertices());
+        Map<String, Integer> nodeToId = new HashMap<>(allVertices.size());
+        for (int nodeIndex = 0; nodeIndex < allVertices.size(); nodeIndex++) {
+            nodeToId.put(allVertices.get(nodeIndex), nodeIndex);
         }
-        return tcPerTest;
+        final int vertexCount = allVertices.size();
+
+        // 2) Construire et cacher l’adjacence en ids (une seule fois)
+        int[][] successorsById = new int[vertexCount][];
+        for (int nodeIndex = 0; nodeIndex < vertexCount; nodeIndex++) {
+            String nodeName = allVertices.get(nodeIndex);
+            Collection<String> successors = graph.getSuccessors(nodeName);
+            int[] succIds = new int[successors.size()];
+            int writePos = 0;
+            for (String succName : successors) {
+                Integer succId = nodeToId.get(succName);
+                if (succId != null) {
+                    succIds[writePos++] = succId;
+                }
+            }
+            if (writePos != succIds.length) {
+                succIds = Arrays.copyOf(succIds, writePos);
+            }
+            successorsById[nodeIndex] = succIds;
+        }
+
+        // 3) Mémoisation des fermetures
+        BitSet[] memoClosure = new BitSet[vertexCount];
+        boolean[] computed = new boolean[vertexCount];
+
+        // 4) Résolution itérative en post-ordre (pas de récursion), avec mémo
+        class Solver {
+            BitSet solve(int startId) {
+                if (computed[startId]) {
+                    return memoClosure[startId];
+                }
+                // Pile pour DFS explicite : (nodeId, nextChildIdx)
+                ArrayDeque<int[]> stack = new ArrayDeque<>();
+                ArrayDeque<Integer> postOrder = new ArrayDeque<>();
+                boolean[] onStack = new boolean[vertexCount];
+
+                stack.push(new int[]{startId, 0});
+                onStack[startId] = true;
+
+                while (!stack.isEmpty()) {
+                    int[] frame = stack.peek();
+                    int nodeId = frame[0];
+                    int nextChildIdx = frame[1];
+
+                    if (computed[nodeId]) {
+                        stack.pop();
+                        continue;
+                    }
+
+                    int[] succIds = successorsById[nodeId];
+                    if (nextChildIdx < succIds.length) {
+                        int childId = succIds[nextChildIdx];
+                        frame[1] = nextChildIdx + 1;
+
+                        if (!computed[childId] && !onStack[childId]) {
+                            stack.push(new int[]{childId, 0});
+                            onStack[childId] = true;
+                        }
+                        // Si le child est déjà computed ou en cours, on avance.
+                    } else {
+                        // Tous les enfants sont traités => post-traitement du nœud
+                        postOrder.push(nodeId);
+                        stack.pop();
+                    }
+                }
+
+                // Post-ordre : on construit les closures une seule fois par nœud
+                while (!postOrder.isEmpty()) {
+                    int nodeId = postOrder.pop();
+                    BitSet closure = new BitSet(vertexCount);
+                    // S’inclure soi-même
+                    closure.set(nodeId);
+                    // Union des closures enfants
+                    for (int childId : successorsById[nodeId]) {
+                        BitSet childClosure = memoClosure[childId];
+                        if (childClosure != null) {
+                            closure.or(childClosure);
+                        } else {
+                            // Cas cycle en cours de résolution : à ce stade, les enfants
+                            // devraient être construits, mais par sécurité on ajoute le child.
+                            closure.set(childId);
+                        }
+                    }
+                    memoClosure[nodeId] = closure;
+                    computed[nodeId] = true;
+                }
+                return memoClosure[startId];
+            }
+        }
+
+        Solver solver = new Solver();
+
+        // 5) Construire le résultat uniquement pour classesToAnalyze
+        Map<String, Set<String>> result = new HashMap<>(classesToAnalyze.size());
+        for (String className : classesToAnalyze) {
+            Integer startId = nodeToId.get(className);
+            if (startId == null) {
+                // Classe absente du graphe : retourne au moins elle-même
+                result.put(className, Set.of(className));
+                continue;
+            }
+            BitSet closureBits = solver.solve(startId);
+            // Matérialiser en Set<String> (si nécessaire)
+            int expected = closureBits.cardinality();
+            Set<String> deps = new HashSet<>((int) (expected / 0.75f) + 1);
+            for (int bit = closureBits.nextSetBit(0); bit >= 0; bit = closureBits.nextSetBit(bit + 1)) {
+                deps.add(allVertices.get(bit));
+            }
+            // Conforme à ton code : on s’assure d’ajouter la classe d’origine
+            deps.add(className);
+            result.put(className, deps);
+        }
+        return result;
     }
+
+
 
     public void setSurefireClasspath(Classpath surefireClasspath) {
         this.surefireClasspath = surefireClasspath;

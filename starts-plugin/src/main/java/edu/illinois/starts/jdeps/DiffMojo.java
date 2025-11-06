@@ -87,7 +87,7 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
         } else if (depFormat == DependencyFormat.CLZ) {
             data = EkstaziHelper.getNonAffectedTests(getArtifactsDir());
         }
-        Set<String> changed = data == null ? new HashSet<String>() : data.getValue();
+        Set<String> changed = data == null ? new HashSet<>() : data.getValue();
         Writer.writeToFile(changed, CHANGED_CLASSES, getArtifactsDir());
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] COMPUTING CHANGES: " + Writer.millsToSeconds(end - start));

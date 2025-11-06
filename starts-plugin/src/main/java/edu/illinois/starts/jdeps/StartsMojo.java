@@ -28,7 +28,7 @@ public class StartsMojo extends RunMojo implements StartsConstants {
         Logger.getGlobal().setLoggingLevel(Level.parse(loggingLevel));
         logger = Logger.getGlobal();
         long end = System.currentTimeMillis();
-        logger.log(Level.FINE, PROFILE_TEST_RUNNING_TIME + Writer.millsToSeconds(end - endOfRunMojo));
-        logger.log(Level.FINE, "[PROFILE] STARTS-MOJO-TOTAL: " + Writer.millsToSeconds(end - endOfRunMojo));
+        logger.log(Level.FINE, PROFILE_TEST_RUNNING_TIME + Writer.millsToLog(end - endOfRunMojo));
+        logger.log(Level.FINE, "[PROFILE] STARTS-MOJO-TOTAL: " + Writer.millsToLog(end - endOfRunMojo));
     }
 }

@@ -11,6 +11,7 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -32,14 +33,13 @@ import org.ekstazi.util.Types;
  * Utility methods for dealing with the .zlc format.
  */
 public class ZLCHelper implements StartsConstants {
+    public static ArrayList<String> testsList;
     public static final String zlcFile = "deps.zlc";
     public static final String STAR_FILE = "file:*";
     private static final Logger LOGGER = Logger.getGlobal();
-    private static Map<String, ZLCData> zlcDataMap;
     private static final String NOEXISTING_ZLCFILE_FIRST_RUN = "@NoExistingZLCFile. First Run?";
 
     public ZLCHelper() {
-        zlcDataMap = new HashMap<>();
     }
 
 // TODO: Uncomment and fix this method. The problem is that it does not track newly added tests correctly
@@ -100,46 +100,64 @@ public class ZLCHelper implements StartsConstants {
             ZLCFormat format
     ) {
         long start = System.currentTimeMillis();
-        List<ZLCData> zlcData = new ArrayList<>();
-        Set<String> deps = new HashSet<>();
-        ChecksumUtil checksumUtil = new ChecksumUtil(true);
-        // merge all the deps for all tests into a single set
-        for (String test : testDeps.keySet()) {
-            deps.addAll(testDeps.get(test));
-        }
-        ArrayList<String> testList = new ArrayList<>(testDeps.keySet());  // all tests
 
-        // for each dep, find it's url, checksum and tests that depend on it
-        for (String dep : deps) {
+        // 1) Liste stable des tests (ordre = indices)
+        ArrayList<String> testList = new ArrayList<>(testDeps.keySet());
+
+        // 2) Construire l’index inverse: dep -> BitSet d’indices de tests
+        //    (O(total deps) au lieu de O(#tests * #deps uniques) à chaque requête)
+        Map<String, BitSet> depToTests = new HashMap<>();
+        for (int i = 0; i < testList.size(); i++) {
+            String test = testList.get(i);
+            Set<String> depsOfTest = testDeps.get(test);
+            if (depsOfTest == null || depsOfTest.isEmpty()) {
+                continue;
+            }
+            for (String dep : depsOfTest) {
+                depToTests.computeIfAbsent(dep, __ -> new BitSet(testList.size())).set(i);
+            }
+        }
+
+        // 3) Pour chaque dep connue, calculer (URL, checksum) et matérialiser selon le format
+        ChecksumUtil checksumUtil = new ChecksumUtil(true);
+        List<ZLCData> zlcData = new ArrayList<>(depToTests.size());
+
+        for (Map.Entry<String, BitSet> e : depToTests.entrySet()) {
+            String dep = e.getKey();
             String klas = ChecksumUtil.toClassName(dep);
             if (Types.isIgnorableInternalName(klas)) {
                 continue;
             }
+
             URL url = loader.getResource(klas);
             if (url == null) {
                 continue;
             }
+
             String extForm = url.toExternalForm();
             if (ChecksumUtil.isWellKnownUrl(extForm) || (!useJars && extForm.startsWith("jar:"))) {
                 continue;
             }
+
             String checksum = checksumUtil.computeSingleCheckSum(url);
+            BitSet bits = e.getValue();
+            int expected = bits.cardinality();
+
             switch (format) {
                 case PLAIN_TEXT:
-                    Set<String> testsStr = new HashSet<>();
-                    for (String test: testDeps.keySet()) {
-                        if (testDeps.get(test).contains(dep)) {
-                            testsStr.add(test);
-                        }
+                    // Matérialiser uniquement les Strings nécessaires
+                    Set<String> testsStr = new HashSet<>((int) (expected / 0.75f) + 1);
+                    // Astuce perf: matérialiser en tableau pour get(idx) très rapide
+                    String[] arr = testList.toArray(String[]::new);
+                    for (int idx = bits.nextSetBit(0); idx >= 0; idx = bits.nextSetBit(idx + 1)) {
+                        testsStr.add(arr[idx]);
                     }
                     zlcData.add(new ZLCData(url, checksum, format, testsStr, null));
                     break;
                 case INDEXED:
-                    Set<Integer> testsIdx = new HashSet<>();
-                    for (int i = 0; i < testList.size(); i++) {
-                        if (testDeps.get(testList.get(i)).contains(dep)) {
-                            testsIdx.add(i);
-                        }
+                    Set<Integer> testsIdx = new HashSet<>((int) (expected / 0.75f) + 1);
+                    for (int idx = bits.nextSetBit(0); idx >= 0; idx = bits.nextSetBit(idx + 1)) {
+                        testsIdx.add(idx); // boxing, mais une seule fois et sans contains()
                     }
                     zlcData.add(new ZLCData(url, checksum, format, null, testsIdx));
                     break;
@@ -147,10 +165,12 @@ public class ZLCHelper implements StartsConstants {
                     throw new RuntimeException("Unexpected ZLCFormat");
             }
         }
+
         long end = System.currentTimeMillis();
         LOGGER.log(Level.FINEST, "[TIME]CREATING ZLC FILE: " + (end - start) + MILLISECOND);
         return new ZLCFileContent(testList, zlcData, format);
     }
+
 
     public static Pair<Set<String>, Set<String>> getChangedData(String artifactsDir, boolean cleanBytes) {
         long start = System.currentTimeMillis();
@@ -162,7 +182,7 @@ public class ZLCHelper implements StartsConstants {
         Set<String> changedClasses = new HashSet<>();
         Set<String> nonAffected = new HashSet<>();
         Set<String> affected = new HashSet<>();
-        Set<String> starTests = new HashSet<>();
+        List<String> starTests = new ArrayList<>();
         ChecksumUtil checksumUtil = new ChecksumUtil(cleanBytes);
         try {
             List<String> zlcLines = Files.readAllLines(zlc.toPath(), Charset.defaultCharset());
@@ -186,7 +206,6 @@ public class ZLCHelper implements StartsConstants {
             }
 
             int testsCount = -1;  // on PLAIN_TEXT, testsCount+1 will starts from 0
-            ArrayList<String> testsList = null;
             if (format == ZLCFormat.INDEXED) {
                 try {
                     testsCount = Integer.parseInt(zlcLines.get(0));
@@ -194,6 +213,7 @@ public class ZLCHelper implements StartsConstants {
                     nfe.printStackTrace();
                 }
                 testsList = new ArrayList<>(zlcLines.subList(1, testsCount + 1));
+                nonAffected.addAll(testsList); // Comme la liste des tests est indexé dans le fichier on la récupère tel quel.
             }
 
             for (int i = testsCount + 1; i < zlcLines.size(); i++) {
@@ -201,14 +221,26 @@ public class ZLCHelper implements StartsConstants {
                 String[] parts = line.split(space);
                 String stringURL = parts[0];
                 String oldCheckSum = parts[1];
-                Set<String> tests;
+                List<String> tests = null;
                 if (format == ZLCFormat.INDEXED) {
-                    Set<Integer> testsIdx = parts.length == 3 ? fromCSVToInt(parts[2]) : new HashSet<>();
-                    tests = testsIdx.stream().map(testsList::get).collect(Collectors.toSet());
+                    BitSet testsBits = (parts.length == 3)
+                            ? fromCSVToBitSet(parts[2], testsList.size())
+                            : new BitSet();
+                    int expected = testsBits.cardinality();
+                    List<String> out = new ArrayList<>((int)(expected / 0.75f) + 1);
+
+                    String[] arr = testsList.toArray(String[]::new);
+
+                    for (int idx = testsBits.nextSetBit(0); idx >= 0; idx = testsBits.nextSetBit(idx + 1)) {
+                        // optionnel: borne si tu n'as pas garanti la validité des indices
+                        if (idx < arr.length) {
+                            out.add(arr[idx]);
+                        }
+                    }
+                    tests = out;
                 } else {
-                    tests = parts.length == 3 ? fromCSV(parts[2]) : new HashSet<>();
+                    tests = parts.length == 3 ? fromCSV(parts[2]) : new ArrayList<>();
                 }
-                nonAffected.addAll(tests);
                 URL url = new URL(stringURL);
                 String newCheckSum = checksumUtil.computeSingleCheckSum(url);
                 if (!newCheckSum.equals(oldCheckSum)) {
@@ -234,12 +266,35 @@ public class ZLCHelper implements StartsConstants {
         return new Pair<>(nonAffected, changedClasses);
     }
 
-    private static Set<String> fromCSV(String tests) {
-        return new HashSet<>(Arrays.asList(tests.split(COMMA)));
+    private static List<String> fromCSV(String tests) {
+        return Arrays.asList(tests.split(COMMA));
     }
 
-    private static Set<Integer> fromCSVToInt(String tests) {
-        return Arrays.stream(tests.split(COMMA)).map(Integer::parseInt).collect(Collectors.toSet());
+    private static BitSet fromCSVToBitSet(CharSequence csv, int maxIndexExclusive) {
+        BitSet bs = new BitSet(maxIndexExclusive); // 1 bit par index
+        int csvlength = csv.length();
+        int index = 0;
+        boolean inNum = false;
+        for (int i = 0; i < csvlength; i++) {
+            char charAt = csv.charAt(i);
+            if (charAt == ',') {
+                if (inNum) {
+                    bs.set(index);
+                    index = 0;
+                    inNum = false;
+                }
+            } else {
+                // optionnel: ignorer espaces
+                if (charAt >= '0' && charAt <= '9') {
+                    inNum = true;
+                    index = index * 10 + (charAt - '0');
+                }
+            }
+        }
+        if (inNum) {
+            bs.set(index);
+        }
+        return bs;
     }
 
     public static Set<String> getExistingClasses(String artifactsDir) {
