@@ -10,9 +10,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
@@ -147,20 +149,129 @@ public class Loadables implements StartsConstants {
 
     private DirectedGraph<String> makeGraph(Map<String, Set<String>> deps,
                                             List<String> moreEdges) {
-        DirectedGraphBuilder<String> builder = getBuilderFromDeps(deps);
+        DirectedGraphBuilder<String> builder = getBuilderFromDeps(deps, true, true);
         addEdgesToGraphBuilder(builder, moreEdges);
         return builder.build();
     }
 
-    private DirectedGraphBuilder<String> getBuilderFromDeps(Map<String, Set<String>> deps) {
-        DirectedGraphBuilder<String> builder = new DirectedGraphBuilder<>();
-        for (String key : deps.keySet()) {
-            for (String dep : deps.get(key)) {
-                builder.addEdge(key, dep);
+
+    public DirectedGraphBuilder<String> getBuilderFromDeps(
+            Map<String, Set<String>> deps,
+            boolean excludeNoise,
+            boolean bypassTypeNodes
+    ) {
+        // Copie défensive
+        Map<String, Set<String>> graph = new HashMap<>(deps.size());
+        for (Map.Entry<String, Set<String>> e : deps.entrySet()) {
+            graph.put(e.getKey(), e.getValue() == null ? new HashSet<>() : new HashSet<>(e.getValue()));
+        }
+
+        // 1) Filtrage du bruit (libs de tests/logging + nls/utils)
+        if (excludeNoise) {
+            graph.entrySet().removeIf(entry -> isNoiseNode(entry.getKey()));
+            for (Map.Entry<String, Set<String>> entry : graph.entrySet()) {
+                entry.getValue().removeIf(this::isNoiseNode);
             }
         }
+
+        // 2) Bypass des nœuds *.type.* (supprime l’effet “colle” en reconnectant prédécesseurs → successeurs)
+        if (bypassTypeNodes) {
+            graph = bypassTypeNodes(graph);
+        }
+
+        // 3) Construction du graphe
+        DirectedGraphBuilder<String> builder = new DirectedGraphBuilder<>();
+        for (Map.Entry<String, Set<String>> e : graph.entrySet()) {
+            String source = e.getKey();
+            Set<String> targets = e.getValue();
+
+            if (targets == null || targets.isEmpty()) {
+                // important: conserver les sommets isolés
+                builder.addVertex(source);
+                continue;
+            }
+            for (String target : targets) {
+                builder.addEdge(source, target);
+            }
+        }
+
         return builder;
     }
+
+    private boolean isNoiseNode(String fqcn) {
+        String s = fqcn.toLowerCase(Locale.ROOT);
+        return s.startsWith("java.")
+                || s.startsWith("javax.")
+                || s.startsWith("jakarta.")
+                || s.startsWith("org.slf4j.")
+                || s.startsWith("ch.qos.logback.")
+                || s.startsWith("org.apache.logging.")
+                || s.startsWith("org.junit.")
+                || s.startsWith("org.mockito.")
+                || s.startsWith("org.assertj.")
+                || s.startsWith("com.fasterxml.")
+                || s.contains(".nls.")
+                || s.contains(".utils.");
+        // on NE met pas ".type." ici : on le traite via le bypass pour garder la connectivité métier utile
+    }
+
+    private Map<String, Set<String>> bypassTypeNodes(Map<String, Set<String>> graph) {
+        // Construire les prédécesseurs
+        Map<String, Set<String>> predecessors = new HashMap<>();
+        for (Map.Entry<String, Set<String>> e : graph.entrySet()) {
+            String source = e.getKey();
+            for (String target : e.getValue()) {
+                predecessors.computeIfAbsent(target, k -> new HashSet<>()).add(source);
+            }
+            predecessors.computeIfAbsent(source, k -> new HashSet<>());
+        }
+
+        // Lister les nœuds .type.
+        Set<String> typeNodes = new HashSet<>();
+        for (String node : graph.keySet()) {
+            if (node.toLowerCase(Locale.ROOT).contains(".type.")) {
+                typeNodes.add(node);
+            }
+        }
+        if (typeNodes.isEmpty()) {
+            return graph;
+        }
+
+        // Bypass P->T->S => P->S (sans garder T)
+        // garde-fou en cas de nœud .type. hyper-connecté
+        final long bypassEdgeLimit = 200_000L;
+
+        for (String typeNode : typeNodes) {
+            Set<String> preds = predecessors.getOrDefault( typeNode, Collections.emptySet());
+            Set<String> succs = graph.getOrDefault(typeNode, Collections.emptySet());
+
+            long potential = (long) preds.size() * (long) succs.size();
+            boolean tooBig = potential > bypassEdgeLimit;
+
+            if (!preds.isEmpty() && !succs.isEmpty() && !tooBig) {
+                for (String pred : preds) {
+                    Set<String> out = graph.computeIfAbsent(pred, k -> new HashSet<>());
+                    for (String succ : succs) {
+                        if (!pred.equals(succ) && !succ.toLowerCase(Locale.ROOT).contains(".type.")) {
+                            out.add(succ);
+                        }
+                    }
+                }
+            }
+            // si "tooBig", on ne reconnecte pas (on coupe ce hub .type. spécifique)
+        }
+
+        // Supprimer T et toutes les références vers T
+        for (String t : typeNodes) {
+            graph.remove(t);
+        }
+        for (Map.Entry<String, Set<String>> e : graph.entrySet()) {
+            e.getValue().removeIf(typeNodes::contains);
+        }
+
+        return graph;
+    }
+
 
     public Map<String, Set<String>> getDepMap(String pathToUse, List<String> classes)
             throws IllegalArgumentException {
@@ -171,22 +282,7 @@ public class Loadables implements StartsConstants {
         List<String> args = new ArrayList<>(Arrays.asList("-v"));
         if (filterLib) {
             // TODO: We need a cleaner/generic way to add filters
-            String exclusions =
-                    "java.*"
-                            + "|sun.*"
-                            + "|javax.*"
-                            + "|jakarta.*"
-                            + "|org.slf4j.*"
-                            + "|ch.qos.logback.*"
-                            + "|org.apache.logging.*"
-                            + "|org.junit.*"
-                            + "|org.mockito.*"
-                            + "|org.assertj.*"
-                            + "|com.fasterxml.*"
-                            // Ajouts "bruit" projet
-                            + "|.*\\.nls(\\.|$).*"
-                            + "|.*\\.utils(\\.|$).*";
-            args.addAll(Arrays.asList("-filter", exclusions));
+            args.addAll(Arrays.asList("-filter", "java.*|sun.*"));
         }
         List<String> localPaths = getClasspathWithNoJars();
         if (localPaths.isEmpty()) {
