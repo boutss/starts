@@ -171,7 +171,22 @@ public class Loadables implements StartsConstants {
         List<String> args = new ArrayList<>(Arrays.asList("-v"));
         if (filterLib) {
             // TODO: We need a cleaner/generic way to add filters
-            args.addAll(Arrays.asList("-filter", "java.*|sun.*"));
+            String exclusions =
+                    "java.*"
+                            + "|sun.*"
+                            + "|javax.*"
+                            + "|jakarta.*"
+                            + "|org.slf4j.*"
+                            + "|ch.qos.logback.*"
+                            + "|org.apache.logging.*"
+                            + "|org.junit.*"
+                            + "|org.mockito.*"
+                            + "|org.assertj.*"
+                            + "|com.fasterxml.*"
+                            // Ajouts "bruit" projet
+                            + "|.*\\.nls(\\.|$).*"
+                            + "|.*\\.utils(\\.|$).*";
+            args.addAll(Arrays.asList("-filter", exclusions));
         }
         List<String> localPaths = getClasspathWithNoJars();
         if (localPaths.isEmpty()) {
