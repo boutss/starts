@@ -98,6 +98,12 @@ abstract class BaseMojo extends SurefireMojo implements StartsConstants {
     @Parameter(property = "startsLogging", defaultValue = "CONFIG")
     protected String loggingLevel;
 
+    /**
+     * Permet de ne pas récupérer les dépendances de l'archi qui crée une colle entre les classes.
+     */
+    @Parameter(property = "exclureArchiDep", defaultValue = TRUE)
+    protected boolean exclureArchiDep;
+
     protected void printResult(Set<String> set, String title) {
         Writer.writeToLog(set, title, Logger.getGlobal());
     }
@@ -241,7 +247,7 @@ abstract class BaseMojo extends SurefireMojo implements StartsConstants {
         }
         long loadM2EdgesFromCache = System.currentTimeMillis();
         // 2. Get non-reflection edges from CUT and SDK; use (1) to build graph
-        loadables.create(new ArrayList<>(moreEdges), sfClassPath, computeUnreached);
+        loadables.create(new ArrayList<>(moreEdges), sfClassPath, computeUnreached, exclureArchiDep);
 
         Map<String, Set<String>> transitiveClosure = loadables.getTransitiveClosure();
         long createLoadables = System.currentTimeMillis();

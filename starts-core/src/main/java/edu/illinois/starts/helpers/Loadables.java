@@ -10,21 +10,20 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
+
+import org.apache.maven.surefire.booter.Classpath;
 
 import edu.illinois.starts.constants.StartsConstants;
 import edu.illinois.starts.util.ChecksumUtil;
 import edu.illinois.starts.util.Logger;
 import edu.illinois.yasgl.DirectedGraph;
 import edu.illinois.yasgl.DirectedGraphBuilder;
-import org.apache.maven.surefire.booter.Classpath;
 import org.ekstazi.util.Types;
 
 /**
@@ -83,12 +82,12 @@ public class Loadables implements StartsConstants {
     }
 
     public Loadables create(List<String> moreEdges, Classpath sfClassPath,
-                            boolean computeUnreached) {
+                            boolean computeUnreached, boolean exclureArchiDep) {
         setSurefireClasspath(sfClassPath);
         LOGGER.log(Level.FINEST, "More: " + moreEdges.size());
         extraEdges = moreEdges;
         long startTime = System.currentTimeMillis();
-        deps = getDepMap(sfPathString, classesToAnalyze);
+        deps = getDepMap(sfPathString, classesToAnalyze, exclureArchiDep);
         long jdepsTime = System.currentTimeMillis();
         graph = makeGraph(deps, extraEdges);
         long graphBuildingTime = System.currentTimeMillis();
@@ -149,34 +148,18 @@ public class Loadables implements StartsConstants {
 
     private DirectedGraph<String> makeGraph(Map<String, Set<String>> deps,
                                             List<String> moreEdges) {
-        DirectedGraphBuilder<String> builder = getBuilderFromDeps(deps, true, true);
+        DirectedGraphBuilder<String> builder = getBuilderFromDeps(deps);
         addEdgesToGraphBuilder(builder, moreEdges);
         return builder.build();
     }
 
-
     public DirectedGraphBuilder<String> getBuilderFromDeps(
-            Map<String, Set<String>> deps,
-            boolean excludeNoise,
-            boolean bypassTypeNodes
+            Map<String, Set<String>> deps
     ) {
         // Copie défensive
         Map<String, Set<String>> graph = new HashMap<>(deps.size());
         for (Map.Entry<String, Set<String>> e : deps.entrySet()) {
             graph.put(e.getKey(), e.getValue() == null ? new HashSet<>() : new HashSet<>(e.getValue()));
-        }
-
-        // 1) Filtrage du bruit (libs de tests/logging + nls/utils)
-        if (excludeNoise) {
-            graph.entrySet().removeIf(entry -> isNoiseNode(entry.getKey()));
-            for (Map.Entry<String, Set<String>> entry : graph.entrySet()) {
-                entry.getValue().removeIf(this::isNoiseNode);
-            }
-        }
-
-        // 2) Bypass des nœuds *.type.* (supprime l’effet “colle” en reconnectant prédécesseurs → successeurs)
-        if (bypassTypeNodes) {
-            graph = bypassTypeNodes(graph);
         }
 
         // 3) Construction du graphe
@@ -198,82 +181,8 @@ public class Loadables implements StartsConstants {
         return builder;
     }
 
-    private boolean isNoiseNode(String fqcn) {
-        String s = fqcn.toLowerCase(Locale.ROOT);
-        return s.startsWith("java.")
-                || s.startsWith("javax.")
-                || s.startsWith("jakarta.")
-                || s.startsWith("org.slf4j.")
-                || s.startsWith("ch.qos.logback.")
-                || s.startsWith("org.apache.logging.")
-                || s.startsWith("org.junit.")
-                || s.startsWith("org.mockito.")
-                || s.startsWith("org.assertj.")
-                || s.startsWith("com.fasterxml.")
-                || s.contains(".nls.")
-                || s.contains(".utils.");
-        // on NE met pas ".type." ici : on le traite via le bypass pour garder la connectivité métier utile
-    }
 
-    private Map<String, Set<String>> bypassTypeNodes(Map<String, Set<String>> graph) {
-        // Construire les prédécesseurs
-        Map<String, Set<String>> predecessors = new HashMap<>();
-        for (Map.Entry<String, Set<String>> e : graph.entrySet()) {
-            String source = e.getKey();
-            for (String target : e.getValue()) {
-                predecessors.computeIfAbsent(target, k -> new HashSet<>()).add(source);
-            }
-            predecessors.computeIfAbsent(source, k -> new HashSet<>());
-        }
-
-        // Lister les nœuds .type.
-        Set<String> typeNodes = new HashSet<>();
-        for (String node : graph.keySet()) {
-            if (node.toLowerCase(Locale.ROOT).contains(".type.")) {
-                typeNodes.add(node);
-            }
-        }
-        if (typeNodes.isEmpty()) {
-            return graph;
-        }
-
-        // Bypass P->T->S => P->S (sans garder T)
-        // garde-fou en cas de nœud .type. hyper-connecté
-        final long bypassEdgeLimit = 200_000L;
-
-        for (String typeNode : typeNodes) {
-            Set<String> preds = predecessors.getOrDefault( typeNode, Collections.emptySet());
-            Set<String> succs = graph.getOrDefault(typeNode, Collections.emptySet());
-
-            long potential = (long) preds.size() * (long) succs.size();
-            boolean tooBig = potential > bypassEdgeLimit;
-
-            if (!preds.isEmpty() && !succs.isEmpty() && !tooBig) {
-                for (String pred : preds) {
-                    Set<String> out = graph.computeIfAbsent(pred, k -> new HashSet<>());
-                    for (String succ : succs) {
-                        if (!pred.equals(succ) && !succ.toLowerCase(Locale.ROOT).contains(".type.")) {
-                            out.add(succ);
-                        }
-                    }
-                }
-            }
-            // si "tooBig", on ne reconnecte pas (on coupe ce hub .type. spécifique)
-        }
-
-        // Supprimer T et toutes les références vers T
-        for (String t : typeNodes) {
-            graph.remove(t);
-        }
-        for (Map.Entry<String, Set<String>> e : graph.entrySet()) {
-            e.getValue().removeIf(typeNodes::contains);
-        }
-
-        return graph;
-    }
-
-
-    public Map<String, Set<String>> getDepMap(String pathToUse, List<String> classes)
+    public Map<String, Set<String>> getDepMap(String pathToUse, List<String> classes, boolean exclureArchiDep)
             throws IllegalArgumentException {
         if (classes.isEmpty()) {
             //There are no test classes, no need to waste time with jdeps
@@ -281,8 +190,37 @@ public class Loadables implements StartsConstants {
         }
         List<String> args = new ArrayList<>(Arrays.asList("-v"));
         if (filterLib) {
+            String filtre = "";
+            if ( exclureArchiDep ) {
+                filtre = "com.imrglobal.framework.*|" +
+                        "com.hermes.arc.critere.*|" +
+                        "com.hermes.arc.commun.*|" +
+                        "com.hermes.arc.habilitation.*|" +
+                        "com.efluid.hibernate.*|" +
+                        "com.efluid.arc.commun.*|" +
+                        "com.hermes.crm.contrat.annotation.*|" +
+                        "com.efluid.type.*|" +
+                        "com.efluid.framework.erreur.*|" +
+                        "com.efluid.assertions.*|" +
+                        "com.efluid.framework.*|" +
+                        "com.efluid.junit.*|" +
+                        "com.hermes.ref.adresse.businessobject.*|";
+            }
+            filtre += "test.hermes.arc.commun.*|" +
+                    "test.junit.efluid.*|" +
+                    "java.*|" +
+                    "javax.*|" +
+                    "jakarta.*|" +
+                    "org.junit.*|" +
+                    "org.mockito.*|" +
+                    "org.assertj.*|" +
+                    "org.hibernate.*|" +
+                    "org.slf4j.*|" +
+                    "ch.qos.logback.*|" +
+                    "org.apache.logging.*|" +
+                    "com.fasterxml.*";
             // TODO: We need a cleaner/generic way to add filters
-            args.addAll(Arrays.asList("-filter", "java.*|sun.*"));
+            args.addAll( Arrays.asList( "-filter", filtre) );
         }
         List<String> localPaths = getClasspathWithNoJars();
         if (localPaths.isEmpty()) {
@@ -301,10 +239,30 @@ public class Loadables implements StartsConstants {
         args.addAll(localPaths);
         LOGGER.log(Level.FINEST, "JDEPS CMD: " + args);
         Map<String, Set<String>> depMap = RTSUtil.runJdeps(args);
+
+        exclusions( depMap );
+
         if (LOGGER.getLoggingLevel().intValue() == Level.FINEST.intValue()) {
             Writer.writeMapToFile(depMap, artifactsDir + File.separator + "jdeps-out");
         }
         return depMap;
+    }
+
+    private static void exclusions(Map<String, Set<String>> depMap) {
+        depMap.forEach( (key, deps) -> {
+            boolean keyInTypePackage = key.contains(".type.");
+            boolean keyInUtilPackage = key.contains(".utils.") || key.contains(".util.");
+            deps.removeIf(dep -> !keyInTypePackage && dep.contains(".type.E"));
+            deps.removeIf(dep -> !keyInUtilPackage && dep.endsWith("Utils"));
+        });
+
+        depMap.forEach( (key, deps) -> {
+            deps.removeIf( dep ->
+                                   dep.contains( ".nls." ) ||
+                                   dep.endsWith( "Constantes" ) ||
+                                   dep.endsWith( "Builder" ) ||
+                                   dep.endsWith( "Alerts" ) );
+        });
     }
 
     private void addEdgesToGraphBuilder(DirectedGraphBuilder<String> builder, List<String> edges) {
