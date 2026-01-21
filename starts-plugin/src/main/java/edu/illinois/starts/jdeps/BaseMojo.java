@@ -127,6 +127,7 @@ abstract class BaseMojo extends SurefireMojo implements StartsConstants {
             MavenProject accessedProject = (MavenProject) projectField.get(this);
             List<String> includes = PomUtil.getFromPom("include", accessedProject);
             List<String> excludes = PomUtil.getFromPom("exclude", accessedProject);
+            excludes.removeIf( s -> s.contains("TestIT*.java") ); // On souhaite également récupérer les tests d'intégrations
             Logger.getGlobal().log(Level.FINEST, "@@Excludes: " + excludes);
             Logger.getGlobal().log(Level.FINEST,"@@Includes: " + includes);
             setIncludes(includes);
