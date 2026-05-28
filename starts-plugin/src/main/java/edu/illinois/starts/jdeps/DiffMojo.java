@@ -78,7 +78,7 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
         }
     }
 
-    protected Pair<Set<String>, Set<String>> computeChangeData(boolean writeChanged) throws MojoExecutionException {
+    public Pair<Set<String>, Set<String>> computeChangeData(boolean writeChanged) throws MojoExecutionException {
         long start = System.currentTimeMillis();
         Pair<Set<String>, Set<String>> data = null;
         if (depFormat == DependencyFormat.ZLC) {
@@ -94,7 +94,7 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
         return data;
     }
 
-    protected void updateForNextRun(Set<String> nonAffected) throws MojoExecutionException {
+    public void updateForNextRun(Set<String> nonAffected) throws MojoExecutionException {
         long start = System.currentTimeMillis();
         Classpath sfClassPath = getSureFireClassPath();
         String sfPathString = Writer.pathToString(sfClassPath.getClassPath());
