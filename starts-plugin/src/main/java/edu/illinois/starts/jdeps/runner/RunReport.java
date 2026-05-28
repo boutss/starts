@@ -18,10 +18,9 @@ import edu.illinois.starts.util.Logger;
  * - sortie console via Logger
  * - buffer interne pour ecriture dans un fichier horodate
  *
- * Usage :
- *   RunReport report = new RunReport(logger, logsDir, projectName);
- *   report.log("message");
- *   report.writeToFile();
+ * En cas de succes Maven, la sortie du sous-process n'est pas loggee.
+ * En cas d'echec, seules les lignes pertinentes (tests KO) sont conservees,
+ * via le filtre isFailureLine().
  */
 public class RunReport {
 
@@ -72,15 +71,13 @@ public class RunReport {
         log("  BILAN");
         separator();
 
-        // TU
         if (unitCount == 0) {
             log("  [TU] Unitaires   : [-] Aucun");
         } else {
             log("  [TU] Unitaires   : " + (surefireOk ? "[OK] OK" : "[FAIL] ECHEC")
-                    + " (" + unitCount + " tests)");
+                        + " (" + unitCount + " tests)");
         }
 
-        // TI
         if (itCount == 0) {
             log("  [TI] Integration : [-] Aucun");
         } else if (itOverLimit) {
@@ -89,10 +86,95 @@ public class RunReport {
             log("  [TI] Integration : [SKIP] Non lance");
         } else {
             log("  [TI] Integration : " + (failsafeOk ? "[OK] OK" : "[FAIL] ECHEC")
-                    + " (" + itCount + " tests)");
+                        + " (" + itCount + " tests)");
         }
 
         separator();
+    }
+
+    // -------------------------------------------------------------------------
+    // Filtre des lignes Maven utiles en cas d'echec
+    // -------------------------------------------------------------------------
+
+    /**
+     * Retourne true pour les lignes qui identifient un test en echec dans la
+     * sortie Surefire/Failsafe en mode batch.
+     *
+     * <p>Lignes conservees (exemples) :
+     * <pre>
+     *   [ERROR] Tests run: 3, Failures: 1, Errors: 0  ...  &lt;&lt;&lt; FAILURE!
+     *   [ERROR]   TestFiltreRequete.testFiltreVide  Time elapsed: 0.12 s  &lt;&lt;&lt; FAILURE!
+     *   [ERROR]   TestFiltreRequete.testFiltreVide  Time elapsed: 0.05 s  &lt;&lt;&lt; ERROR!
+     *   [ERROR] BUILD FAILURE
+     *   [INFO]  Tests run: 5, Failures: 0, Errors: 1, ...  (recap avec au moins un KO)
+     * </pre>
+     *
+     * @param line une ligne de la sortie Maven
+     * @return true si la ligne decrit un test en echec ou une erreur de build
+     */
+    /**
+     * Retourne true pour les lignes de detail d'un test individuel en echec
+     * (nom du test + duree), qui apparaissent juste avant le marqueur &lt;&lt;&lt;.
+     *
+     * <p>Exemples :
+     * <pre>
+     *   TestFiltreRequete.testFiltreVide  Time elapsed: 0.12 s  &lt;&lt;&lt; FAILURE!
+     * </pre>
+     *
+     * @param line une ligne de la sortie Maven
+     * @return true si la ligne decrit le detail d'un test en echec
+     */
+    /**
+     * Retourne true pour toutes les lignes pertinentes en cas d'echec Maven.
+     * Exclut uniquement le bruit de bas niveau (telechargements, lignes de build vides).
+     *
+     * @param line une ligne de la sortie Maven
+     * @return true si la ligne est utile au diagnostic
+     */
+    public static boolean isRelevantLine(String line) {
+        if (line == null || line.isBlank()) {
+            return false;
+        }
+        // Exclure le bruit de routine
+        if (line.contains("Downloading") || line.contains("Downloaded")
+                || line.contains("Building jar")
+                || line.contains("BUILD SUCCESS")) {
+            return false;
+        }
+        // Exclure les lignes [INFO] purement structurelles
+        if (line.startsWith("[INFO]")) {
+            return line.contains("Tests run:")
+                    || line.contains("FAILURE")
+                    || line.contains("ERROR")
+                    || line.contains("Time elapsed");
+        }
+        // Garder tout le reste : [ERROR], [WARNING], lignes sans prefixe (detail test)
+        return true;
+    }
+
+    public static boolean isTestDetailLine(String line) {
+        if (line == null) {
+            return false;
+        }
+        // Ligne sans prefixe [ERROR] mais contenant "Time elapsed" + "<<< FAILURE/ERROR"
+        return line.contains("Time elapsed") && (line.contains("<<< FAILURE") || line.contains("<<< ERROR"));
+    }
+
+    public static boolean isFailureLine(String line) {
+        if (line == null) {
+            return false;
+        }
+        if (line.startsWith("[ERROR]")) {
+            return line.contains("FAILURE")
+                    || line.contains("ERROR")
+                    || line.contains("Tests run:")
+                    || line.contains("<<<");
+        }
+        // Ligne de recap Surefire/Failsafe : ne garder que celles avec un echec reel
+        if (line.startsWith("[INFO]") && line.contains("Tests run:")) {
+            return !line.contains("Failures: 0") || !line.contains("Errors: 0");
+        }
+        return false;
     }
 
     // -------------------------------------------------------------------------

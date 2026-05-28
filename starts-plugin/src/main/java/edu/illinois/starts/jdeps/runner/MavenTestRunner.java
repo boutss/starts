@@ -8,6 +8,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.logging.Level;
@@ -32,10 +33,8 @@ import edu.illinois.starts.util.Logger;
  *   1. Build de config-dev (mvn install -DskipTests) pour garantir la jar .m2 a jour
  *   2. Execution du script d'initialisation BDD locale (init_bdd_localhost.sh)
  *
- * Transmet au sous-process :
- *   - MAVEN_OPTS (truststore SSL, memoire JVM)
- *
- * La sortie du sous-process est capturee dans RunReport.
+ * En cas de succes, la sortie Maven n'est pas loggee.
+ * En cas d'echec, seules les lignes decrivant des tests en erreur sont conservees.
  */
 public class MavenTestRunner {
 
@@ -62,7 +61,6 @@ public class MavenTestRunner {
 
     /**
      * Lance les tests unitaires via Surefire.
-     * Pas de limite sur le nombre de classes.
      *
      * @param testClasses noms simples des classes (ex: TestFiltreRequete)
      * @return true si tous les tests passent
@@ -86,19 +84,16 @@ public class MavenTestRunner {
     /**
      * Prepare et lance les tests d'integration via Failsafe.
      *
-     * Etapes prealables :
-     *   1. Build de config-dev pour garantir la jar a jour dans le .m2
-     *   2. Initialisation de la BDD locale via le script shell
-     *
      * @param testClasses noms simples des classes (ex: TestITFiltreDAO)
      * @return true si tous les tests passent
      */
     public boolean invokeFailsafe(List<String> testClasses) throws MojoExecutionException {
-        // -- Pre-requis -------------------------------------------------------
         buildConfigDev();
-        prepareDatabase();
+        if (!prepareDatabase()) {
+            report.log("  [ABORT] Les TI ne sont pas lancees : BDD non initialisee.");
+            return false;
+        }
 
-        // -- Lancement Failsafe -----------------------------------------------
         report.log("  Classes : " + String.join(",", testClasses));
 
         Properties props = buildCommonProperties();
@@ -112,7 +107,7 @@ public class MavenTestRunner {
     }
 
     // -------------------------------------------------------------------------
-    // Build config-dev (toujours, pour garantir la jar a jour)
+    // Build config-dev
     // -------------------------------------------------------------------------
 
     private void buildConfigDev() throws MojoExecutionException {
@@ -132,28 +127,26 @@ public class MavenTestRunner {
         props.setProperty("maven.test.skip", "true");
 
         boolean ok = invokeMaven(configDevPom, List.of("install"), props);
-        if (ok) {
-            report.log("  [OK] config-dev installe dans le .m2");
-        } else {
-            report.log("  [WARN] Echec build config-dev - les TI continuent malgre tout");
-        }
+        report.log(ok ? "  [OK] config-dev installe dans le .m2"
+                           : "  [WARN] Echec build config-dev - les TI continuent malgre tout");
     }
 
     // -------------------------------------------------------------------------
-    // Initialisation BDD locale via script shell
+    // Initialisation BDD locale
     // -------------------------------------------------------------------------
 
-    private void prepareDatabase() {
+    private boolean prepareDatabase() {
         report.section("Pre-requis : initialisation BDD locale");
 
         File script = resolveFile(initDbScriptPath);
         if (!script.exists()) {
-            report.log("  [WARN] Script BDD introuvable : " + script.getAbsolutePath());
-            report.log("         Les TI tournent sans reinitialisation de la BDD.");
-            return;
+            report.log("  [ERREUR] Script BDD introuvable : " + script.getAbsolutePath());
+            return false;
         }
 
-        report.log("  -> " + script.getAbsolutePath());
+        // Bufferiser la sortie du script : on ne l'affiche qu'en cas d'echec
+        List<String> bddLines = new ArrayList<>();
+        bddLines.add("  -> " + script.getAbsolutePath());
 
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", script.getAbsolutePath());
@@ -161,28 +154,33 @@ public class MavenTestRunner {
             pb.redirectErrorStream(true);
 
             Process process = pb.start();
-
-            // Capturer toute la sortie du script dans le rapport
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    report.log("  [BDD] " + line);
+                    bddLines.add("  [BDD] " + line);
                 }
             }
 
             int exitCode = process.waitFor();
             if (exitCode == 0) {
                 report.log("  [OK] BDD locale initialisee");
+                return true;
             } else {
-                report.log("  [WARN] Echec initialisation BDD (code : " + exitCode + ")");
-                report.log("         Les TI tournent malgre tout.");
+                // Echec : on vide le buffer dans le rapport
+                bddLines.forEach(report::log);
+                report.log("  [ERREUR] Echec initialisation BDD (code : " + exitCode + ")");
+                return false;
             }
         } catch (IOException e) {
-            report.log("  [WARN] Erreur execution script BDD : " + e.getMessage());
+            bddLines.forEach(report::log);
+            report.log("  [ERREUR] Erreur execution script BDD : " + e.getMessage());
+            return false;
         } catch (InterruptedException e) {
-            report.log("  [WARN] Script BDD interrompu : " + e.getMessage());
+            bddLines.forEach(report::log);
+            report.log("  [ERREUR] Script BDD interrompu : " + e.getMessage());
             Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -199,15 +197,17 @@ public class MavenTestRunner {
         request.setProperties(props);
         request.setBatchMode(true);
 
-        // Transmettre MAVEN_OPTS (truststore SSL, memoire JVM...)
         String mavenOpts = System.getenv("MAVEN_OPTS");
         if (mavenOpts != null && !mavenOpts.isEmpty()) {
             request.setMavenOpts(mavenOpts);
         }
 
-        // Capturer stdout + stderr du sous-process dans le rapport
-        request.setOutputHandler(line -> report.log("  [MVN] " + line));
-        request.setErrorHandler(line  -> report.log("  [ERR] " + line));
+        // Capturer toute la sortie en memoire.
+        // En cas de succes : rien ne s'affiche.
+        // En cas d'echec  : on filtre et on ne garde que les lignes utiles.
+        List<String> outputLines = new ArrayList<>();
+        request.setOutputHandler(outputLines::add);
+        request.setErrorHandler(outputLines::add);
 
         Invoker invoker = new DefaultInvoker();
         invoker.setWorkingDirectory(pom.getParentFile());
@@ -216,10 +216,14 @@ public class MavenTestRunner {
             InvocationResult result = invoker.execute(request);
             if (result.getExitCode() != 0) {
                 logger.log(Level.WARNING,
-                        "Maven a retourne le code : " + result.getExitCode()
-                        + " pour : " + goals);
-                report.log("  Rapports : " + project.getBuild().getDirectory()
-                        + "/surefire-reports/");
+                           "Maven a retourne le code : " + result.getExitCode()
+                                   + " pour : " + goals);
+                report.log("  Sortie Maven (" + outputLines.size() + " lignes capturees) :");
+                outputLines.stream()
+                        .filter(RunReport::isRelevantLine)
+                        .forEach(line -> report.log("    " + line));
+                report.log("  Rapports complets : "
+                                   + project.getBuild().getDirectory() + "/surefire-reports/");
                 return false;
             }
             return true;
@@ -230,7 +234,7 @@ public class MavenTestRunner {
     }
 
     // -------------------------------------------------------------------------
-    // Properties communes aux invocations de tests
+    // Properties communes
     // -------------------------------------------------------------------------
 
     private Properties buildCommonProperties() {
@@ -243,7 +247,7 @@ public class MavenTestRunner {
     }
 
     // -------------------------------------------------------------------------
-    // Utilitaire : resolution de chemin relatif/absolu
+    // Utilitaire
     // -------------------------------------------------------------------------
 
     private File resolveFile(String path) {

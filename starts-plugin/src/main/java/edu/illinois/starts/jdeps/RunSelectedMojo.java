@@ -50,7 +50,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
  *   mvn starts:run-selected -DinitDbScriptPath=../../scripts/init_bdd_localhost.sh
  */
 @Mojo(name = "run-selected", requiresDirectInvocation = true,
-      requiresDependencyResolution = ResolutionScope.TEST)
+        requiresDependencyResolution = ResolutionScope.TEST)
 @Execute(phase = LifecyclePhase.TEST_COMPILE)
 public class RunSelectedMojo extends DiffMojo implements StartsConstants {
 
@@ -75,7 +75,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
      * Exemple : config-dev/src/main/properties2/framework2.properties
      */
     @Parameter(property = "propertiesFile",
-               defaultValue = "${project.basedir}/../config-dev/src/main/properties2/framework2.properties")
+            defaultValue = "${project.basedir}/../config-dev/src/main/properties2/framework2.properties")
     private String propertiesFile;
 
     /**
@@ -84,7 +84,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
      * pour garantir que sa jar est a jour dans le .m2 local.
      */
     @Parameter(property = "configDevPomPath",
-               defaultValue = "${project.basedir}/../config-dev/pom.xml")
+            defaultValue = "${project.basedir}/../config-dev/pom.xml")
     private String configDevPomPath;
 
     /**
@@ -93,7 +93,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
      * Exemple : archi/scripts/init_bdd_localhost.sh
      */
     @Parameter(property = "initDbScriptPath",
-               defaultValue = "${project.basedir}/../../scripts/init_bdd_localhost.sh")
+            defaultValue = "${project.basedir}/../scripts/init_bdd_localhost.sh")
     private String initDbScriptPath;
 
     /**
@@ -101,7 +101,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
      * Par defaut : ${project.basedir}/../scripts/starts/logs
      */
     @Parameter(property = "logsDir",
-               defaultValue = "${project.basedir}/../scripts/starts/logs")
+            defaultValue = "${project.basedir}/../scripts/starts/logs")
     private String logsDir;
 
     /**
@@ -162,7 +162,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         boolean itOverLimit = split.getItCount() > maxItTests;
         if (itOverLimit) {
             report.log("  [MAX] " + split.getItCount() + " TI > seuil " + maxItTests
-                    + " -> Failsafe non lance");
+                               + " -> Failsafe non lance");
             report.log("        Lancez : mvn failsafe:integration-test pour les TI");
         }
 
@@ -190,7 +190,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
             report.log(failsafeOk ? "  [OK] Failsafe OK" : "  [FAIL] Failsafe ECHEC");
         } else {
             report.section("Etape 5 : Failsafe - "
-                    + (itOverLimit ? "seuil depasse" : "aucun TI"));
+                                   + (itOverLimit ? "seuil depasse" : "aucun TI"));
         }
 
         // --------------------------------------------------------------------
