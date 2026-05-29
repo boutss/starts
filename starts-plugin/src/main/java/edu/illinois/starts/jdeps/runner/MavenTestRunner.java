@@ -69,7 +69,10 @@ public class MavenTestRunner {
         report.log("  Classes : " + String.join(",", testClasses));
 
         Properties props = buildCommonProperties();
-        props.setProperty("test", String.join(",", testClasses));
+
+        // Ecrire la liste dans un fichier pour eviter la limite Windows (8191 chars)
+        File includesFile = writeTestsToFile(testClasses, "surefire-includes");
+        props.setProperty("includesFile", includesFile.getAbsolutePath());
 
         return invokeMaven(
                 new File(project.getFile().getAbsolutePath()),
@@ -97,8 +100,11 @@ public class MavenTestRunner {
         report.log("  Classes : " + String.join(",", testClasses));
 
         Properties props = buildCommonProperties();
-        props.setProperty("it.test", String.join(",", testClasses));
         props.setProperty("skipITs", "false");
+
+        // Ecrire la liste dans un fichier pour eviter la limite Windows (8191 chars)
+        File includesFile = writeTestsToFile(testClasses, "failsafe-includes");
+        props.setProperty("failsafe.includesFile", includesFile.getAbsolutePath());
 
         return invokeMaven(
                 new File(project.getFile().getAbsolutePath()),
@@ -253,5 +259,36 @@ public class MavenTestRunner {
     private File resolveFile(String path) {
         File f = new File(path);
         return f.isAbsolute() ? f : new File(project.getBasedir(), path);
+    }
+
+    /**
+     * Ecrit les noms de classes de test dans un fichier temporaire,
+     * un pattern par ligne (format attendu par Surefire includesFile).
+     * Evite la limite de longueur de ligne de commande sur Windows.
+     *
+     * @param testClasses liste des noms simples de classes de test
+     * @param prefix      prefixe du fichier temporaire
+     * @return le fichier cree dans le repertoire target/
+     * @throws MojoExecutionException si l'ecriture echoue
+     */
+    private File writeTestsToFile(List<String> testClasses, String prefix)
+            throws MojoExecutionException {
+        try {
+            File targetDir = new File(project.getBuild().getDirectory());
+            targetDir.mkdirs();
+            File file = new File(targetDir, prefix + ".txt");
+            // Surefire attend des patterns avec **/ prefix et .java suffix
+            List<String> patterns = testClasses.stream()
+                    .map(c -> "**/" + c + ".java")
+                    .collect(java.util.stream.Collectors.toList());
+            java.nio.file.Files.write(file.toPath(), patterns,
+                                      java.nio.charset.StandardCharsets.UTF_8);
+            report.log("  [includes] " + file.getAbsolutePath()
+                               + " (" + testClasses.size() + " tests)");
+            return file;
+        } catch (IOException e) {
+            throw new MojoExecutionException(
+                    "Impossible d'ecrire le fichier includes : " + e.getMessage(), e);
+        }
     }
 }
