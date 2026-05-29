@@ -124,34 +124,6 @@ public class RunReport {
      * @param line une ligne de la sortie Maven
      * @return true si la ligne decrit le detail d'un test en echec
      */
-    /**
-     * Retourne true pour toutes les lignes pertinentes en cas d'echec Maven.
-     * Exclut uniquement le bruit de bas niveau (telechargements, lignes de build vides).
-     *
-     * @param line une ligne de la sortie Maven
-     * @return true si la ligne est utile au diagnostic
-     */
-    public static boolean isRelevantLine(String line) {
-        if (line == null || line.isBlank()) {
-            return false;
-        }
-        // Exclure le bruit de routine
-        if (line.contains("Downloading") || line.contains("Downloaded")
-                || line.contains("Building jar")
-                || line.contains("BUILD SUCCESS")) {
-            return false;
-        }
-        // Exclure les lignes [INFO] purement structurelles
-        if (line.startsWith("[INFO]")) {
-            return line.contains("Tests run:")
-                    || line.contains("FAILURE")
-                    || line.contains("ERROR")
-                    || line.contains("Time elapsed");
-        }
-        // Garder tout le reste : [ERROR], [WARNING], lignes sans prefixe (detail test)
-        return true;
-    }
-
     public static boolean isTestDetailLine(String line) {
         if (line == null) {
             return false;

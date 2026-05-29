@@ -224,10 +224,21 @@ public class MavenTestRunner {
                 logger.log(Level.WARNING,
                            "Maven a retourne le code : " + result.getExitCode()
                                    + " pour : " + goals);
-                report.log("  Sortie Maven (" + outputLines.size() + " lignes capturees) :");
-                outputLines.stream()
-                        .filter(RunReport::isRelevantLine)
-                        .forEach(line -> report.log("    " + line));
+                long matched = outputLines.stream()
+                        .filter(line -> RunReport.isFailureLine(line) || RunReport.isTestDetailLine(line))
+                        .count();
+                if (matched == 0) {
+                    // Filtre strict sans resultat : fallback sur les lignes [ERROR] uniquement
+                    report.log("  Sortie Maven (" + outputLines.size() + " lignes, filtre de secours) :");
+                    outputLines.stream()
+                            .filter(line -> line != null && line.startsWith("[ERROR]"))
+                            .forEach(line -> report.log("    " + line));
+                } else {
+                    report.log("  Tests en echec :");
+                    outputLines.stream()
+                            .filter(line -> RunReport.isFailureLine(line) || RunReport.isTestDetailLine(line))
+                            .forEach(line -> report.log("    " + line));
+                }
                 report.log("  Rapports complets : "
                                    + project.getBuild().getDirectory() + "/surefire-reports/");
                 return false;
