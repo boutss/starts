@@ -43,6 +43,8 @@ public class MavenTestRunner {
     private final Logger       logger;
     private final String       configDevPomPath;
     private final String       initDbScriptPath;
+    private final int          surefireForkCount;
+    private final int          failsafeForkCount;
 
     /** Flux console direct, non intercepte par le logging Maven. */
     private static final java.io.PrintStream CONSOLE =
@@ -51,12 +53,16 @@ public class MavenTestRunner {
     public MavenTestRunner(MavenProject project,
                            RunReport    report,
                            String       configDevPomPath,
-                           String       initDbScriptPath) {
-        this.project          = project;
-        this.report           = report;
-        this.logger           = Logger.getGlobal();
-        this.configDevPomPath = configDevPomPath;
-        this.initDbScriptPath = initDbScriptPath;
+                           String       initDbScriptPath,
+                           int          surefireForkCount,
+                           int          failsafeForkCount) {
+        this.project           = project;
+        this.report            = report;
+        this.logger            = Logger.getGlobal();
+        this.configDevPomPath  = configDevPomPath;
+        this.initDbScriptPath  = initDbScriptPath;
+        this.surefireForkCount = surefireForkCount;
+        this.failsafeForkCount = failsafeForkCount;
     }
 
     // -------------------------------------------------------------------------
@@ -126,6 +132,13 @@ public class MavenTestRunner {
             props.setProperty(propertyName, String.join(",", chunk));
             if (isFailsafe) {
                 props.setProperty("skipITs", "false");
+                // TI : 1 JVM neuve par classe (isolation BDD), plusieurs en parallele
+                props.setProperty("forkCount", String.valueOf(failsafeForkCount));
+                props.setProperty("reuseForks", "false");
+            } else {
+                // TU : JVM reutilisees entre classes, plusieurs en parallele
+                props.setProperty("forkCount", String.valueOf(surefireForkCount));
+                props.setProperty("reuseForks", "true");
             }
 
             boolean ok = invokeMaven(

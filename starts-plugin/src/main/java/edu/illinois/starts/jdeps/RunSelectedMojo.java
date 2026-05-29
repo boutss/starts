@@ -114,6 +114,22 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
     @Parameter(property = "updateChecksums", defaultValue = TRUE)
     private boolean updateChecksums;
 
+    /**
+     * Nombre de JVM forkees en parallele pour les tests unitaires (Surefire).
+     * Les JVM sont reutilisees entre classes (reuseForks=true).
+     * Par defaut : 4. Mettre 1 pour desactiver le parallelisme.
+     */
+    @Parameter(property = "surefireForkCount", defaultValue = "4")
+    private int surefireForkCount;
+
+    /**
+     * Nombre de JVM forkees en parallele pour les tests d'integration (Failsafe).
+     * Chaque JVM est neuve par classe (reuseForks=false) pour isoler la BDD.
+     * Par defaut : 1 (sequentiel). Augmenter avec prudence selon la tolerance BDD.
+     */
+    @Parameter(property = "failsafeForkCount", defaultValue = "1")
+    private int failsafeForkCount;
+
     // =========================================================================
     // Point d'entree
     // =========================================================================
@@ -128,7 +144,8 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         TestSelector    selector = new TestSelector(this, report);
         DatabaseChecker dbCheck  = new DatabaseChecker(propertiesFile, getProject().getBasedir(), report);
         MavenTestRunner runner   = new MavenTestRunner(
-                getProject(), report, configDevPomPath, initDbScriptPath);
+                getProject(), report, configDevPomPath, initDbScriptPath,
+                surefireForkCount, failsafeForkCount);
 
         // -- En-tete ---------------------------------------------------------
         report.log("");
