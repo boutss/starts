@@ -4,6 +4,7 @@
 
 package edu.illinois.starts.jdeps;
 
+import java.io.File;
 import java.util.Set;
 import java.util.logging.Level;
 
@@ -11,6 +12,7 @@ import edu.illinois.starts.constants.StartsConstants;
 import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.jdeps.runner.DatabaseChecker;
 import edu.illinois.starts.jdeps.runner.MavenTestRunner;
+import edu.illinois.starts.jdeps.runner.PropertiesGuard;
 import edu.illinois.starts.jdeps.runner.RunReport;
 import edu.illinois.starts.jdeps.runner.TestSelector;
 import edu.illinois.starts.jdeps.runner.TestSplitResult;
@@ -167,31 +169,46 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         }
 
         // --------------------------------------------------------------------
-        // ETAPE 4 - Surefire (TU) - pas de limite de nombre
+        // ETAPE 4 + 5 - Surefire (TU) + Failsafe (TI)
+        // Le fichier framework2.properties est patche pour la duree des tests
+        // (ACTIVER_HIBERNATE=false) puis restaure dans tous les cas.
         // --------------------------------------------------------------------
-        boolean surefireOk = true;
-        if (split.hasUnitTests()) {
-            report.section("Etape 4 : Surefire - " + split.getUnitCount() + " TU");
-            surefireOk = runner.invokeSurefire(split.getUnitTests());
-            report.log(surefireOk ? "  [OK] Surefire OK" : "  [FAIL] Surefire ECHEC");
-        } else {
-            report.section("Etape 4 : Surefire - aucun TU");
+        File propsFile = new File( propertiesFile);
+        if (!propsFile.isAbsolute()) {
+            propsFile = new File(getProject().getBasedir(), propertiesFile);
         }
 
-        // --------------------------------------------------------------------
-        // ETAPE 5 - Failsafe (TI) - avec pre-requis : config-dev + init BDD
-        // --------------------------------------------------------------------
+        boolean surefireOk  = true;
         boolean failsafeOk  = true;
         boolean failsafeRan = false;
-        if (split.hasItTests() && !itOverLimit) {
-            report.section("Etape 5 : Failsafe - " + split.getItCount() + " TI");
-            failsafeOk  = runner.invokeFailsafe(split.getItTests());
-            failsafeRan = true;
-            report.log(failsafeOk ? "  [OK] Failsafe OK" : "  [FAIL] Failsafe ECHEC");
-        } else {
-            report.section("Etape 5 : Failsafe - "
-                                   + (itOverLimit ? "seuil depasse" : "aucun TI"));
-        }
+
+        try (PropertiesGuard guard = new PropertiesGuard(propsFile, report)) {
+            guard.disable("ACTIVER_HIBERNATE");
+
+            // ----------------------------------------------------------------
+            // ETAPE 4 - Surefire (TU)
+            // ----------------------------------------------------------------
+            if (split.hasUnitTests()) {
+                report.section("Etape 4 : Surefire - " + split.getUnitCount() + " TU");
+                surefireOk = runner.invokeSurefire(split.getUnitTests());
+                report.log(surefireOk ? "  [OK] Surefire OK" : "  [FAIL] Surefire ECHEC");
+            } else {
+                report.section("Etape 4 : Surefire - aucun TU");
+            }
+
+            // ----------------------------------------------------------------
+            // ETAPE 5 - Failsafe (TI)
+            // ----------------------------------------------------------------
+            if (split.hasItTests() && !itOverLimit) {
+                report.section("Etape 5 : Failsafe - " + split.getItCount() + " TI");
+                failsafeOk  = runner.invokeFailsafe(split.getItTests());
+                failsafeRan = true;
+                report.log(failsafeOk ? "  [OK] Failsafe OK" : "  [FAIL] Failsafe ECHEC");
+            } else {
+                report.section("Etape 5 : Failsafe - "
+                                       + (itOverLimit ? "seuil depasse" : "aucun TI"));
+            }
+        } // <- PropertiesGuard.close() restaure framework2.properties ici
 
         // --------------------------------------------------------------------
         // ETAPE 6 - Bilan + mise a jour checksums
