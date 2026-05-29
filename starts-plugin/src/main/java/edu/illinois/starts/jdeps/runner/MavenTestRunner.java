@@ -70,18 +70,7 @@ public class MavenTestRunner {
      * @return true si tous les tests passent
      */
     public boolean invokeSurefire(List<String> testClasses) throws MojoExecutionException {
-        report.log("  Classes : " + String.join(",", testClasses));
-
-        Properties props = buildCommonProperties();
-
-        // Ecrire la liste dans un fichier pour eviter la limite Windows (8191 chars)
-        File includesFile = writeTestsToFile(testClasses, "surefire-includes");
-        props.setProperty("includesFile", includesFile.getAbsolutePath());
-
-        return invokeMaven(
-                new File(project.getFile().getAbsolutePath()),
-                List.of("test"),
-                props, testClasses.size());
+        return runTestsInChunks(testClasses, "test", "test", false);
     }
 
     // -------------------------------------------------------------------------
@@ -99,22 +88,80 @@ public class MavenTestRunner {
             report.log("  [ABORT] Les TI ne sont pas lancees : BDD non initialisee.");
             return false;
         }
-        // Note : buildConfigDev() est appele en amont par RunSelectedMojo,
-        // avant Surefire et Failsafe, pour n'installer la jar qu'une seule fois.
+        return runTestsInChunks(testClasses, "it.test", "failsafe:integration-test,failsafe:verify", true);
+    }
 
-        report.log("  Classes : " + String.join(",", testClasses));
+    /**
+     * Lance les tests en plusieurs lots pour eviter la limite Windows de 8191 chars
+     * sur -Dtest=...
+     *
+     * @param testClasses  liste complete des tests
+     * @param propertyName "test" (Surefire) ou "it.test" (Failsafe)
+     * @param goals        goals Maven separes par virgule
+     * @param isFailsafe   true pour ajouter skipITs=false
+     * @return true si tous les lots passent
+     */
+    private boolean runTestsInChunks(List<String> testClasses, String propertyName,
+                                     String goals, boolean isFailsafe)
+            throws MojoExecutionException {
 
-        Properties props = buildCommonProperties();
-        props.setProperty("skipITs", "false");
+        // Determiner la taille de chunk : moyenne ~30 chars/nom + virgules = ~32
+        // Limite Windows 8191, on garde une marge pour les autres args -> ~6000 chars utiles
+        final int maxCharsPerChunk = 6000;
+        List<List<String>> chunks = splitIntoChunks(testClasses, maxCharsPerChunk);
 
-        // Ecrire la liste dans un fichier pour eviter la limite Windows (8191 chars)
-        File includesFile = writeTestsToFile(testClasses, "failsafe-includes");
-        props.setProperty("failsafe.includesFile", includesFile.getAbsolutePath());
+        report.log("  Classes : " + testClasses.size() + " test(s) en " + chunks.size() + " lot(s)");
 
-        return invokeMaven(
-                new File(project.getFile().getAbsolutePath()),
-                List.of("failsafe:integration-test", "failsafe:verify"),
-                props, testClasses.size());
+        List<String> goalsList = List.of(goals.split(","));
+        boolean allOk = true;
+
+        for (int i = 0; i < chunks.size(); i++) {
+            List<String> chunk = chunks.get(i);
+            if (chunks.size() > 1) {
+                report.log("  -- Lot " + (i + 1) + "/" + chunks.size()
+                                   + " (" + chunk.size() + " tests) --");
+            }
+
+            Properties props = buildCommonProperties();
+            props.setProperty(propertyName, String.join(",", chunk));
+            if (isFailsafe) {
+                props.setProperty("skipITs", "false");
+            }
+
+            boolean ok = invokeMaven(
+                    new File(project.getFile().getAbsolutePath()),
+                    goalsList,
+                    props, chunk.size());
+            if (!ok) {
+                allOk = false;
+                // On continue les autres lots meme si un lot echoue
+            }
+        }
+        return allOk;
+    }
+
+    /**
+     * Decoupe une liste de noms de tests en lots dont la concatenation
+     * (separateur virgule) ne depasse pas maxChars.
+     */
+    private static List<List<String>> splitIntoChunks(List<String> tests, int maxChars) {
+        List<List<String>> chunks = new ArrayList<>();
+        List<String> current = new ArrayList<>();
+        int currentSize = 0;
+        for (String t : tests) {
+            int addSize = t.length() + 1; // +1 pour la virgule
+            if (currentSize + addSize > maxChars && !current.isEmpty()) {
+                chunks.add(current);
+                current = new ArrayList<>();
+                currentSize = 0;
+            }
+            current.add(t);
+            currentSize += addSize;
+        }
+        if (!current.isEmpty()) {
+            chunks.add(current);
+        }
+        return chunks;
     }
 
     // -------------------------------------------------------------------------
@@ -213,35 +260,35 @@ public class MavenTestRunner {
             request.setMavenOpts(mavenOpts);
         }
 
-        // Capturer toute la sortie en memoire + afficher la progression en console.
+        // Suivi de progression via parsing des lignes Surefire/Failsafe
+        final ProgressWatcher watcher = total > 0 ? new ProgressWatcher(total, CONSOLE) : null;
+        if (watcher != null) {
+            watcher.start();
+        }
+
+        // Capturer toute la sortie en memoire + alimenter le watcher.
         // En cas de succes : seule la progression s'affiche.
         // En cas d'echec  : les lignes utiles sont filtrees et loggees.
         List<String> outputLines = new ArrayList<>();
-        request.setOutputHandler(outputLines::add);
+        request.setOutputHandler(line -> {
+            outputLines.add(line);
+            if (watcher != null) {
+                watcher.onMavenLine(line);
+            }
+        });
         request.setErrorHandler(outputLines::add);
 
         Invoker invoker = new DefaultInvoker();
         invoker.setWorkingDirectory(pom.getParentFile());
 
-        // Surveiller le dossier surefire-reports en arriere-plan pour l'avancement
-        String reportsDirName = goals.contains("test") ? "surefire-reports" : "failsafe-reports";
-        File reportsDir = new File(project.getBuild().getDirectory(), reportsDirName);
-        CONSOLE.println("  [debug] Surveillance : " + reportsDir.getAbsolutePath()
-                                + " (existe=" + reportsDir.exists() + ")");
-        CONSOLE.flush();
-        ProgressWatcher watcher = total > 0
-                ? new ProgressWatcher(reportsDir, total, CONSOLE)
-                : null;
-        if (watcher != null) {
-            watcher.start();
-        }
-
+        long startNanos = System.nanoTime();
         try {
             InvocationResult result = invoker.execute(request);
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
             if (watcher != null) {
                 watcher.stop();
             }
-            CONSOLE.println(); // fin de la ligne de progression
+            report.log("  [duree] " + formatDuration(elapsedMs));
             if (result.getExitCode() != 0) {
                 logger.log(Level.WARNING,
                            "Maven a retourne le code : " + result.getExitCode()
@@ -313,6 +360,22 @@ public class MavenTestRunner {
             return dot >= 0 ? fqn.substring(dot + 1) : fqn;
         }
         return line;
+    }
+
+    /**
+     * Formate une duree en ms vers une chaine lisible.
+     * Exemples : "342 ms", "12.5 s", "2 min 35 s".
+     */
+    private static String formatDuration(long ms) {
+        if (ms < 1000) {
+            return ms + " ms";
+        }
+        if (ms < 60_000) {
+            return String.format("%.1f s", ms / 1000.0);
+        }
+        long minutes = ms / 60_000;
+        long seconds = (ms % 60_000) / 1000;
+        return minutes + " min " + seconds + " s";
     }
 
     /**
