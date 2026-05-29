@@ -44,6 +44,10 @@ public class MavenTestRunner {
     private final String       configDevPomPath;
     private final String       initDbScriptPath;
 
+    /** Flux console direct, non intercepte par le logging Maven. */
+    private static final java.io.PrintStream CONSOLE =
+            new java.io.PrintStream(new java.io.FileOutputStream(java.io.FileDescriptor.out));
+
     public MavenTestRunner(MavenProject project,
                            RunReport    report,
                            String       configDevPomPath,
@@ -77,7 +81,7 @@ public class MavenTestRunner {
         return invokeMaven(
                 new File(project.getFile().getAbsolutePath()),
                 List.of("test"),
-                props);
+                props, testClasses.size());
     }
 
     // -------------------------------------------------------------------------
@@ -91,11 +95,12 @@ public class MavenTestRunner {
      * @return true si tous les tests passent
      */
     public boolean invokeFailsafe(List<String> testClasses) throws MojoExecutionException {
-        buildConfigDev();
         if (!prepareDatabase()) {
             report.log("  [ABORT] Les TI ne sont pas lancees : BDD non initialisee.");
             return false;
         }
+        // Note : buildConfigDev() est appele en amont par RunSelectedMojo,
+        // avant Surefire et Failsafe, pour n'installer la jar qu'une seule fois.
 
         report.log("  Classes : " + String.join(",", testClasses));
 
@@ -109,14 +114,14 @@ public class MavenTestRunner {
         return invokeMaven(
                 new File(project.getFile().getAbsolutePath()),
                 List.of("failsafe:integration-test", "failsafe:verify"),
-                props);
+                props, testClasses.size());
     }
 
     // -------------------------------------------------------------------------
     // Build config-dev
     // -------------------------------------------------------------------------
 
-    private void buildConfigDev() throws MojoExecutionException {
+    public void buildConfigDev() throws MojoExecutionException {
         report.section("Pre-requis : build de config-dev");
 
         File configDevPom = resolveFile(configDevPomPath);
@@ -132,7 +137,7 @@ public class MavenTestRunner {
         props.setProperty("skipTests",       "true");
         props.setProperty("maven.test.skip", "true");
 
-        boolean ok = invokeMaven(configDevPom, List.of("install"), props);
+        boolean ok = invokeMaven(configDevPom, List.of("install"), props, 0);
         report.log(ok ? "  [OK] config-dev installe dans le .m2"
                            : "  [WARN] Echec build config-dev - les TI continuent malgre tout");
     }
@@ -194,7 +199,7 @@ public class MavenTestRunner {
     // Invocation Maven commune
     // -------------------------------------------------------------------------
 
-    private boolean invokeMaven(File pom, List<String> goals, Properties props)
+    private boolean invokeMaven(File pom, List<String> goals, Properties props, int total)
             throws MojoExecutionException {
 
         InvocationRequest request = new DefaultInvocationRequest();
@@ -208,9 +213,9 @@ public class MavenTestRunner {
             request.setMavenOpts(mavenOpts);
         }
 
-        // Capturer toute la sortie en memoire.
-        // En cas de succes : rien ne s'affiche.
-        // En cas d'echec  : on filtre et on ne garde que les lignes utiles.
+        // Capturer toute la sortie en memoire + afficher la progression en console.
+        // En cas de succes : seule la progression s'affiche.
+        // En cas d'echec  : les lignes utiles sont filtrees et loggees.
         List<String> outputLines = new ArrayList<>();
         request.setOutputHandler(outputLines::add);
         request.setErrorHandler(outputLines::add);
@@ -218,8 +223,25 @@ public class MavenTestRunner {
         Invoker invoker = new DefaultInvoker();
         invoker.setWorkingDirectory(pom.getParentFile());
 
+        // Surveiller le dossier surefire-reports en arriere-plan pour l'avancement
+        String reportsDirName = goals.contains("test") ? "surefire-reports" : "failsafe-reports";
+        File reportsDir = new File(project.getBuild().getDirectory(), reportsDirName);
+        CONSOLE.println("  [debug] Surveillance : " + reportsDir.getAbsolutePath()
+                                + " (existe=" + reportsDir.exists() + ")");
+        CONSOLE.flush();
+        ProgressWatcher watcher = total > 0
+                ? new ProgressWatcher(reportsDir, total, CONSOLE)
+                : null;
+        if (watcher != null) {
+            watcher.start();
+        }
+
         try {
             InvocationResult result = invoker.execute(request);
+            if (watcher != null) {
+                watcher.stop();
+            }
+            CONSOLE.println(); // fin de la ligne de progression
             if (result.getExitCode() != 0) {
                 logger.log(Level.WARNING,
                            "Maven a retourne le code : " + result.getExitCode()
@@ -245,6 +267,10 @@ public class MavenTestRunner {
             }
             return true;
         } catch (MavenInvocationException e) {
+            if (watcher != null) {
+                watcher.stop();
+            }
+            CONSOLE.println();
             throw new MojoExecutionException(
                     "Erreur invocation Maven " + goals + " : " + e.getMessage(), e);
         }
@@ -270,6 +296,23 @@ public class MavenTestRunner {
     private File resolveFile(String path) {
         File f = new File(path);
         return f.isAbsolute() ? f : new File(project.getBasedir(), path);
+    }
+
+    /**
+     * Extrait le nom simple de la classe depuis une ligne Surefire du type :
+     * "Tests run: 1, Failures: 0, ... - in com.example.TestFoo"
+     *
+     * @param line ligne de sortie Surefire
+     * @return nom simple de la classe (ex: TestFoo) ou la ligne entiere si non trouve
+     */
+    private static String extractClassName(String line) {
+        int idx = line.lastIndexOf(" - in ");
+        if (idx >= 0) {
+            String fqn = line.substring(idx + 6).trim();
+            int dot = fqn.lastIndexOf('.');
+            return dot >= 0 ? fqn.substring(dot + 1) : fqn;
+        }
+        return line;
     }
 
     /**

@@ -183,7 +183,14 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         boolean failsafeRan = false;
 
         try (PropertiesGuard guard = new PropertiesGuard(propsFile, report)) {
+            // Patcher framework2.properties EN PREMIER, avant le build config-dev,
+            // pour que la JAR soit generee avec ACTIVER_HIBERNATE=false
             guard.disable("ACTIVER_HIBERNATE");
+
+            // ----------------------------------------------------------------
+            // Pre-requis commun TU + TI : build config-dev avec le fichier patche
+            // ----------------------------------------------------------------
+            runner.buildConfigDev();
 
             // ----------------------------------------------------------------
             // ETAPE 4 - Surefire (TU)
