@@ -1,3 +1,7 @@
+> **Note** : Ce dépôt est un fork customisé pour efluid. Voir
+> [README-efluid.adoc](README-efluid.adoc) pour la documentation
+> des goals et scripts spécifiques (run-tests, debug-paths, etc.).
+
 # STARTS (*STA*tic *R*egression *T*est *S*election) Overview
 
 [![Build status](https://ci.appveyor.com/api/projects/status/giplqg2f4sylogop?svg=true)](https://ci.appveyor.com/project/august782/starts)
