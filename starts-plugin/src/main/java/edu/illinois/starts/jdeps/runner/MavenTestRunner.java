@@ -118,6 +118,19 @@ public class MavenTestRunner {
 
         report.log("  Classes : " + testClasses.size() + " test(s) en " + chunks.size() + " lot(s)");
 
+        // Vider entierement le dossier des rapports avant de lancer les lots
+        // (XML + .txt + failsafe-summary.xml + tout autre fichier residuel),
+        // pour que FailedTestsTracker ne remonte que les echecs de ce run.
+        String reportsDirName = isFailsafe ? "failsafe-reports" : "surefire-reports";
+        File reportsDir = new File(project.getBuild().getDirectory(), reportsDirName);
+        if (reportsDir.exists()) {
+            int deleted = deleteDirContents(reportsDir);
+            if (deleted > 0) {
+                report.log("  [reports] " + deleted + " ancien(s) fichier(s) supprime(s) dans "
+                                   + reportsDirName + "/");
+            }
+        }
+
         List<String> goalsList = List.of(goals.split(","));
         boolean allOk = true;
 
@@ -373,6 +386,32 @@ public class MavenTestRunner {
             return dot >= 0 ? fqn.substring(dot + 1) : fqn;
         }
         return line;
+    }
+
+    /**
+     * Supprime recursivement le contenu d'un dossier (sans supprimer le dossier lui-meme).
+     *
+     * @param dir le dossier a vider
+     * @return le nombre de fichiers/dossiers supprimes
+     */
+    private static int deleteDirContents(File dir) {
+        if (!dir.exists() || !dir.isDirectory()) {
+            return 0;
+        }
+        int deleted = 0;
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return 0;
+        }
+        for (File f : children) {
+            if (f.isDirectory()) {
+                deleted += deleteDirContents(f);
+            }
+            if (f.delete()) {
+                deleted++;
+            }
+        }
+        return deleted;
     }
 
     /**

@@ -4,14 +4,14 @@
 
 package edu.illinois.starts.jdeps;
 
-import java.io.File;
-import java.util.Set;
+import java.io.File;import java.util.List;import java.util.Set;
 import java.util.logging.Level;
 
 import edu.illinois.starts.constants.StartsConstants;
 import edu.illinois.starts.helpers.Writer;
 import edu.illinois.starts.jdeps.runner.DatabaseChecker;
 import edu.illinois.starts.jdeps.runner.MavenTestRunner;
+import edu.illinois.starts.jdeps.runner.FailedTestsTracker;
 import edu.illinois.starts.jdeps.runner.PropertiesGuard;
 import edu.illinois.starts.jdeps.runner.RunReport;
 import edu.illinois.starts.jdeps.runner.TestSelector;
@@ -154,10 +154,29 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         report.separator();
 
         // --------------------------------------------------------------------
-        // ETAPE 1 - Calcul des tests affectes
+        // ETAPE 1 - Detection mode RETRY ou mode STARTS normal
         // --------------------------------------------------------------------
-        report.section("Etape 1 : calcul des tests affectes");
-        Set<String> affectedTests = selector.computeAffectedTests();
+        FailedTestsTracker tracker = new FailedTestsTracker(getProject().getBasedir());
+        Set<String> affectedTests;
+        boolean retryMode = false;
+
+        try {
+            List<String> previousFailures = tracker.readFailedTests();
+            if (!previousFailures.isEmpty()) {
+                retryMode = true;
+                report.section("Etape 1 : mode RETRY (echecs precedents detectes)");
+                report.log("  " + previousFailures.size() + " test(s) en echec a relancer depuis "
+                                   + tracker.getReportFile().getName());
+                report.log("  Le workflow STARTS normal reprendra une fois tous les echecs corriges.");
+                affectedTests = new java.util.LinkedHashSet<>(previousFailures);
+            } else {
+                report.section("Etape 1 : calcul des tests affectes (mode STARTS normal)");
+                affectedTests = selector.computeAffectedTests();
+            }
+        } catch (Exception e) {
+            report.warn("Lecture failed-tests.txt impossible, mode STARTS normal : " + e.getMessage());
+            affectedTests = selector.computeAffectedTests();
+        }
 
         if (affectedTests.isEmpty()) {
             report.log("[OK] Aucun test affecte. Rien a lancer.");
@@ -190,7 +209,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         // Le fichier framework2.properties est patche pour la duree des tests
         // (ACTIVER_HIBERNATE=false) puis restaure dans tous les cas.
         // --------------------------------------------------------------------
-        File propsFile = new File( propertiesFile);
+        File propsFile = new File(propertiesFile);
         if (!propsFile.isAbsolute()) {
             propsFile = new File(getProject().getBasedir(), propertiesFile);
         }
@@ -233,6 +252,23 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
                                        + (itOverLimit ? "seuil depasse" : "aucun TI"));
             }
         } // <- PropertiesGuard.close() restaure framework2.properties ici
+
+        // --------------------------------------------------------------------
+        // Sauvegarde des tests en echec (sera utilise au prochain run pour
+        // bascule automatique en mode RETRY)
+        // --------------------------------------------------------------------
+        try {
+            List<String> failed = tracker.recordFailuresFromReports(
+                    new File(getProject().getBuild().getDirectory()));
+            if (!failed.isEmpty()) {
+                report.log("");
+                report.log("  " + failed.size() + " test(s) en echec sauvegarde(s) dans "
+                                   + tracker.getReportFile().getName());
+                report.log("  Lancer starts:retry-failed pour les relancer uniquement.");
+            }
+        } catch (Exception e) {
+            report.warn("Impossible de sauvegarder les tests en echec : " + e.getMessage());
+        }
 
         // --------------------------------------------------------------------
         // ETAPE 6 - Bilan + mise a jour checksums

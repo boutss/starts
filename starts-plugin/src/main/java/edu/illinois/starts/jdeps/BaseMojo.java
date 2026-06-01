@@ -40,7 +40,7 @@ import org.apache.maven.surefire.booter.SurefireExecutionException;
 /**
  * Base MOJO for the JDeps-Based STARTS.
  */
-abstract class BaseMojo extends SurefireMojo implements StartsConstants {
+public abstract class BaseMojo extends SurefireMojo implements StartsConstants {
     static final String STAR = "*";
 
     @Parameter(defaultValue = "${localRepository}", readonly = true, required = true)

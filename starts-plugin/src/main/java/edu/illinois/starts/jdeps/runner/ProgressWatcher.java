@@ -59,7 +59,7 @@ public class ProgressWatcher {
         int skipped = total - completedClasses.size();
         if (skipped > 0) {
             console.println("  (" + skipped
-                                    + " classe(s) sans test exécuté : classes abstraites, utilitaires ou sans @Test)");
+                                    + " classe(s) sans test execute : classes abstraites, utilitaires ou sans @Test)");
         }
     }
 
