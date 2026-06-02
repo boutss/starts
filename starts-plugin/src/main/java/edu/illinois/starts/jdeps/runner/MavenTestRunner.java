@@ -192,7 +192,7 @@ public class MavenTestRunner {
             boolean ok = invokeMaven(
                     new File(project.getFile().getAbsolutePath()),
                     goalsList,
-                    props, chunk.size());
+                    props, chunk.size(), reportsDir, reportsDirName);
             if (!ok) {
                 allOk = false;
                 // On continue les autres lots meme si un lot echoue
@@ -213,6 +213,53 @@ public class MavenTestRunner {
      * @param simpleName nom simple de la classe de test
      * @return true si un fichier <simpleName>.class existe sous test-classes
      */
+    /**
+     * Scanne les rapports XML d'un dossier surefire/failsafe et retourne les FQN
+     * des classes ayant au moins un echec ou une erreur.
+     */
+    private static List<String> scanFailedClasses(File reportsDir) {
+        List<String> failed = new ArrayList<>();
+        if (reportsDir == null || !reportsDir.isDirectory()) {
+            return failed;
+        }
+        File[] xmls = reportsDir.listFiles(
+                f -> f.getName().startsWith("TEST-") && f.getName().endsWith(".xml"));
+        if (xmls == null) {
+            return failed;
+        }
+        for (File xml : xmls) {
+            try {
+                javax.xml.parsers.DocumentBuilderFactory dbf =
+                        javax.xml.parsers.DocumentBuilderFactory.newInstance();
+                dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(xml);
+                org.w3c.dom.Element ts = doc.getDocumentElement();
+                if (ts == null || !"testsuite".equals(ts.getNodeName())) {
+                    continue;
+                }
+                int fail = parseIntSafe(ts.getAttribute("failures"));
+                int err  = parseIntSafe(ts.getAttribute("errors"));
+                if (fail + err > 0) {
+                    String name = ts.getAttribute("name");
+                    if (name != null && !name.isEmpty()) {
+                        failed.add(name);
+                    }
+                }
+            } catch (Exception ignored) {
+                // XML illisible : on ignore
+            }
+        }
+        return failed;
+    }
+
+    private static int parseIntSafe(String s) {
+        try {
+            return (s == null || s.isEmpty()) ? 0 : Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     private boolean testClassExists(String simpleName) {
         File testClassesDir = new File(project.getBuild().getTestOutputDirectory());
         if (!testClassesDir.isDirectory()) {
@@ -319,7 +366,8 @@ public class MavenTestRunner {
     // Invocation Maven commune
     // -------------------------------------------------------------------------
 
-    private boolean invokeMaven(File pom, List<String> goals, Properties props, int total)
+    private boolean invokeMaven(File pom, List<String> goals, Properties props, int total,
+                                File reportsDir, String reportsDirName)
             throws MojoExecutionException {
 
         InvocationRequest request = new DefaultInvocationRequest();
@@ -362,27 +410,32 @@ public class MavenTestRunner {
                 watcher.stop();
             }
             report.log("  [duree] " + formatDuration(elapsedMs));
+
+            // Surefire/Failsafe executent TOUS les tests d'une invocation (ils ne
+            // s'arretent pas au 1er rouge), puis retournent un exit code non-zero
+            // s'il y a eu des echecs. On se fie a l'exit code (fiable).
             if (result.getExitCode() != 0) {
-                logger.log(Level.WARNING,
-                           "Maven a retourne le code : " + result.getExitCode()
-                                   + " pour : " + goals);
+                logger.log(Level.WARNING, "Maven a retourne le code : "
+                        + result.getExitCode() + " pour : " + goals);
+                // Lister les classes en echec depuis les rapports XML (enrichit l'affichage)
+                List<String> failedClasses = scanFailedClasses(reportsDir);
+                if (!failedClasses.isEmpty()) {
+                    report.log("  " + failedClasses.size() + " classe(s) de test en echec :");
+                    for (String fqn : failedClasses) {
+                        report.log("    - " + fqn);
+                    }
+                }
                 long matched = outputLines.stream()
                         .filter(line -> RunReport.isFailureLine(line) || RunReport.isTestDetailLine(line))
                         .count();
-                if (matched == 0) {
-                    // Filtre strict sans resultat : fallback sur les lignes [ERROR] uniquement
-                    report.log("  Sortie Maven (" + outputLines.size() + " lignes, filtre de secours) :");
-                    outputLines.stream()
-                            .filter(line -> line != null && line.startsWith("[ERROR]"))
-                            .forEach(line -> report.log("    " + line));
-                } else {
-                    report.log("  Tests en echec :");
+                if (matched > 0) {
+                    report.log("  Detail :");
                     outputLines.stream()
                             .filter(line -> RunReport.isFailureLine(line) || RunReport.isTestDetailLine(line))
                             .forEach(line -> report.log("    " + line));
                 }
                 report.log("  Rapports complets : "
-                                   + project.getBuild().getDirectory() + "/surefire-reports/");
+                                   + project.getBuild().getDirectory() + "/" + reportsDirName + "/");
                 return false;
             }
             return true;
