@@ -50,7 +50,7 @@ public class DebugPathsMojo extends DiffMojo implements StartsConstants {
     private String forTest;
 
     /** Limite du nombre de chemins ecrits par classe modifiee (anti-explosion). */
-    @Parameter(property = "maxPathsPerClass", defaultValue = "50")
+    @Parameter(property = "maxPathsPerClass", defaultValue = "1000")
     private int maxPathsPerClass;
 
     /**
@@ -58,7 +58,7 @@ public class DebugPathsMojo extends DiffMojo implements StartsConstants {
      * pour verifier facilement que la version buildee correspond bien a celle
      * attendue (affiche en console et en haut du fichier de sortie).
      */
-    private static final String DEBUG_PATHS_VERSION = "v5 - rattachement test->classe la plus proche (2026-06-01)";
+    private static final String DEBUG_PATHS_VERSION = "v6 - maxPathsPerClass=1000 (2026-06-01)";
 
     @Override
     public void execute() throws MojoExecutionException {
