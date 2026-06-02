@@ -45,6 +45,7 @@ public class MavenTestRunner {
     private final String       initDbScriptPath;
     private final int          surefireForkCount;
     private final int          failsafeForkCount;
+    private final boolean      skipDbInit;
 
     /** Flux console direct, non intercepte par le logging Maven. */
     private static final java.io.PrintStream CONSOLE =
@@ -55,7 +56,8 @@ public class MavenTestRunner {
                            String       configDevPomPath,
                            String       initDbScriptPath,
                            int          surefireForkCount,
-                           int          failsafeForkCount) {
+                           int          failsafeForkCount,
+                           boolean      skipDbInit) {
         this.project           = project;
         this.report            = report;
         this.logger            = Logger.getGlobal();
@@ -63,6 +65,7 @@ public class MavenTestRunner {
         this.initDbScriptPath  = initDbScriptPath;
         this.surefireForkCount = surefireForkCount;
         this.failsafeForkCount = failsafeForkCount;
+        this.skipDbInit        = skipDbInit;
     }
 
     // -------------------------------------------------------------------------
@@ -93,9 +96,15 @@ public class MavenTestRunner {
      * @return true si tous les tests passent
      */
     public boolean invokeFailsafe(List<String> testClasses) throws MojoExecutionException {
-        if (!prepareDatabase()) {
-            report.log("  [ABORT] Les TI ne sont pas lancees : BDD non initialisee.");
-            return false;
+        // En multi-module, l'init BDD est faite UNE fois en amont par
+        // starts:prepare. skipDbInit=true evite de la refaire par module.
+        if (!skipDbInit) {
+            if (!prepareDatabase()) {
+                report.log("  [ABORT] Les TI ne sont pas lancees : BDD non initialisee.");
+                return false;
+            }
+        } else {
+            report.log("  (init BDD deja faite par starts:prepare - skip)");
         }
         return runTestsInChunks(testClasses, "it.test", "failsafe:integration-test,failsafe:verify", true);
     }
@@ -201,7 +210,7 @@ public class MavenTestRunner {
     // Initialisation BDD locale
     // -------------------------------------------------------------------------
 
-    private boolean prepareDatabase() {
+    public boolean prepareDatabase() {
         report.section("Pre-requis : initialisation BDD locale");
 
         File script = resolveFile(initDbScriptPath);

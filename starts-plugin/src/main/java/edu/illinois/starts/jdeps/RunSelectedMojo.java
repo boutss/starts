@@ -133,6 +133,28 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
     @Parameter(property = "failsafeForkCount", defaultValue = "1")
     private int failsafeForkCount;
 
+    /**
+     * Si true, l'init BDD n'est PAS faite dans ce Mojo (deja faite par
+     * starts:prepare en amont pour le multi-module). Defaut : false.
+     */
+    @Parameter(property = "skipDbInit", defaultValue = "false")
+    private boolean skipDbInit;
+
+    /**
+     * Si true, ne patche pas framework2.properties (deja patche par
+     * starts:prepare). Defaut : false.
+     */
+    @Parameter(property = "skipPropertiesPatch", defaultValue = "false")
+    private boolean skipPropertiesPatch;
+
+    /**
+     * Repertoire de travail partage pour les artefacts transverses
+     * (failed-tests.txt agrege). Defaut : le .starts du module.
+     * En multi-module, le shell passe archi/scripts/starts/work.
+     */
+    @Parameter(property = "workDir", defaultValue = "")
+    private String workDir;
+
     // =========================================================================
     // Point d'entree
     // =========================================================================
@@ -142,13 +164,29 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         Logger logger = Logger.getGlobal();
         long start = System.currentTimeMillis();
 
+        // -- Auto-skip : modules sans repertoire de tests --------------------
+        // En reactor complet, beaucoup de modules n'ont pas de tests. On les
+        // ignore immediatement (pas de jdeps, pas de sous-process) pour ne pas
+        // payer le cout inutilement.
+        File testSrcDir   = new File(getProject().getBasedir(), "src/test/java");
+        File testClassDir = new File(getProject().getBuild().getTestOutputDirectory());
+        boolean hasTestSources = testSrcDir.isDirectory()
+                && testSrcDir.list() != null && testSrcDir.list().length > 0;
+        boolean hasTestClasses = testClassDir.isDirectory()
+                && testClassDir.list() != null && testClassDir.list().length > 0;
+        if (!hasTestSources && !hasTestClasses) {
+            logger.log(Level.INFO, "[STARTS] " + getProject().getArtifactId()
+                    + " : aucun test (pas de src/test/java) - skip.");
+            return;
+        }
+
         // -- Collaborateurs --------------------------------------------------
         RunReport       report   = new RunReport(logger, logsDir, getProject().getArtifactId());
         TestSelector    selector = new TestSelector(this, report);
         DatabaseChecker dbCheck  = new DatabaseChecker(propertiesFile, getProject().getBasedir(), report);
         MavenTestRunner runner   = new MavenTestRunner(
                 getProject(), report, configDevPomPath, initDbScriptPath,
-                surefireForkCount, failsafeForkCount);
+                surefireForkCount, failsafeForkCount, skipDbInit);
 
         // -- En-tete ---------------------------------------------------------
         report.log("");
@@ -168,7 +206,9 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         Set<String> affectedTests = new LinkedHashSet<>(selector.computeAffectedTests());
         int startsCount = affectedTests.size();
 
-        FailedTestsTracker tracker = new FailedTestsTracker(getProject().getBasedir());
+        FailedTestsTracker tracker = workDir != null && !workDir.isEmpty()
+                ? new FailedTestsTracker(new File(workDir))
+                : new FailedTestsTracker(getProject().getBasedir());
         List<String> previousFailures;
         try {
             previousFailures = tracker.readFailedTests();
@@ -230,10 +270,15 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         boolean failsafeOk  = true;
         boolean failsafeRan = false;
 
-        try (PropertiesGuard guard = new PropertiesGuard(propsFile, report)) {
-            // Patcher framework2.properties EN PREMIER, avant tout build,
-            // pour que les JAR soient generees avec ACTIVER_HIBERNATE=false
-            guard.disable("ACTIVER_HIBERNATE");
+        // En multi-module, le patch + restauration sont geres par starts:prepare
+        // et le shell. skipPropertiesPatch=true => on ne patche/restaure pas ici.
+        PropertiesGuard guard = skipPropertiesPatch
+                ? null
+                : new PropertiesGuard(propsFile, report);
+        try {
+            if (guard != null) {
+                guard.disable("ACTIVER_HIBERNATE");
+            }
 
             // ----------------------------------------------------------------
             // Pre-requis (compilation reactor + config-dev) : desormais
@@ -265,20 +310,27 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
                 report.section("Etape 5 : Failsafe - "
                                        + (itOverLimit ? "seuil depasse" : "aucun TI"));
             }
-        } // <- PropertiesGuard.close() restaure framework2.properties ici
+        } finally {
+            // Restaure framework2.properties seulement si on l'a patche ici
+            // (mode mono-module). En multi-module, c'est le shell qui restaure.
+            if (guard != null) {
+                guard.close();
+            }
+        }
 
         // --------------------------------------------------------------------
-        // Sauvegarde des tests en echec (sera utilise au prochain run pour
-        // bascule automatique en mode RETRY)
+        // Sauvegarde des tests en echec dans le .starts LOCAL du module.
+        // En multi-module, le script shell agregera tous les failed-tests.txt
+        // locaux dans le workDir partage apres la serie de run-selected.
         // --------------------------------------------------------------------
+        FailedTestsTracker localTracker = new FailedTestsTracker(getProject().getBasedir());
         try {
-            List<String> failed = tracker.recordFailuresFromReports(
+            List<String> failed = localTracker.recordFailuresFromReports(
                     new File(getProject().getBuild().getDirectory()));
             if (!failed.isEmpty()) {
                 report.log("");
                 report.log("  " + failed.size() + " test(s) en echec sauvegarde(s) dans "
-                                   + tracker.getReportFile().getName());
-                report.log("  Au prochain run, ces tests seront ajoutes a la selection STARTS.");
+                                   + localTracker.getReportFile().getAbsolutePath());
             }
         } catch (Exception e) {
             report.warn("Impossible de sauvegarder les tests en echec : " + e.getMessage());
