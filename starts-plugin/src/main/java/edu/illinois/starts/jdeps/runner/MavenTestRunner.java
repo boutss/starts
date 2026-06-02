@@ -76,7 +76,10 @@ public class MavenTestRunner {
      * @return true si tous les tests passent
      */
     public boolean invokeSurefire(List<String> testClasses) throws MojoExecutionException {
-        return runTestsInChunks(testClasses, "test", "test", false);
+        // "surefire:test" (goal direct) et NON "test" (phase) : la phase declenche
+        // tout le cycle jusqu'a test-compile, donc recompile. Le goal direct lance
+        // uniquement Surefire sur les .class deja compiles par le shell.
+        return runTestsInChunks(testClasses, "test", "surefire:test", false);
     }
 
     // -------------------------------------------------------------------------
@@ -193,27 +196,6 @@ public class MavenTestRunner {
     // -------------------------------------------------------------------------
     // Build config-dev
     // -------------------------------------------------------------------------
-
-    public void buildConfigDev() throws MojoExecutionException {
-        report.section("Pre-requis : build de config-dev");
-
-        File configDevPom = resolveFile(configDevPomPath);
-        if (!configDevPom.exists()) {
-            report.log("  [WARN] config-dev introuvable : " + configDevPom.getAbsolutePath());
-            report.log("         Les TI risquent d'echouer si la jar est absente du .m2.");
-            return;
-        }
-
-        report.log("  -> " + configDevPom.getAbsolutePath());
-
-        Properties props = new Properties();
-        props.setProperty("skipTests",       "true");
-        props.setProperty("maven.test.skip", "true");
-
-        boolean ok = invokeMaven(configDevPom, List.of("install"), props, 0);
-        report.log(ok ? "  [OK] config-dev installe dans le .m2"
-                           : "  [WARN] Echec build config-dev - les TI continuent malgre tout");
-    }
 
     // -------------------------------------------------------------------------
     // Initialisation BDD locale

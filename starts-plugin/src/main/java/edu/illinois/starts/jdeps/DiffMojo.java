@@ -21,8 +21,6 @@ import edu.illinois.starts.util.Logger;
 import edu.illinois.starts.util.Pair;
 import edu.illinois.yasgl.DirectedGraph;
 import org.apache.maven.plugin.MojoExecutionException;
-import org.apache.maven.plugins.annotations.Execute;
-import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
@@ -32,7 +30,9 @@ import org.apache.maven.surefire.booter.Classpath;
  * Finds types that have changed since the last time they were analyzed.
  */
 @Mojo(name = "diff", requiresDirectInvocation = true, requiresDependencyResolution = ResolutionScope.TEST)
-@Execute(phase = LifecyclePhase.TEST_COMPILE)
+// Pas de @Execute(TEST_COMPILE) : la compilation est assuree en amont par le
+// script shell (mvn -pl <modules> -am install). Cette annotation, heritee par
+// RunSelectedMojo, declenchait une recompilation systematique a chaque run.
 public class DiffMojo extends BaseMojo implements StartsConstants {
     /**
      * Set this to "false" to disable smart hashing, i.e., to *not* strip

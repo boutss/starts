@@ -4,7 +4,10 @@
 
 package edu.illinois.starts.jdeps;
 
-import java.io.File;import java.util.List;import java.util.Set;
+import java.io.File;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 
 import edu.illinois.starts.constants.StartsConstants;
@@ -18,8 +21,6 @@ import edu.illinois.starts.jdeps.runner.TestSelector;
 import edu.illinois.starts.jdeps.runner.TestSplitResult;
 import edu.illinois.starts.util.Logger;
 import org.apache.maven.plugin.MojoExecutionException;
-import org.apache.maven.plugins.annotations.Execute;
-import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.plugins.annotations.ResolutionScope;
@@ -53,7 +54,9 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
  */
 @Mojo(name = "run-selected", requiresDirectInvocation = true,
         requiresDependencyResolution = ResolutionScope.TEST)
-@Execute(phase = LifecyclePhase.TEST_COMPILE)
+// Pas de @Execute(TEST_COMPILE) : la compilation est assuree par le script shell
+// (mvn -pl <modules> -am install) AVANT l'appel. Cela evite une double
+// compilation (le shell compile, puis @Execute recompilait).
 public class RunSelectedMojo extends DiffMojo implements StartsConstants {
 
     // =========================================================================
@@ -154,28 +157,37 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         report.separator();
 
         // --------------------------------------------------------------------
-        // ETAPE 1 - Detection mode RETRY ou mode STARTS normal
+        // ETAPE 1 - Calcul des tests : UNION (STARTS) + (echecs precedents)
+        //
+        // L'union evite qu'un fix sur un test casse silencieusement un autre
+        // test qui passait. Tant qu'il y a des echecs precedents, on les
+        // relance, mais on continue aussi a verifier les tests affectes par
+        // les changements en cours.
         // --------------------------------------------------------------------
-        FailedTestsTracker tracker = new FailedTestsTracker(getProject().getBasedir());
-        Set<String> affectedTests;
-        boolean retryMode = false;
+        report.section("Etape 1 : calcul des tests affectes");
+        Set<String> affectedTests = new LinkedHashSet<>(selector.computeAffectedTests());
+        int startsCount = affectedTests.size();
 
+        FailedTestsTracker tracker = new FailedTestsTracker(getProject().getBasedir());
+        List<String> previousFailures;
         try {
-            List<String> previousFailures = tracker.readFailedTests();
-            if (!previousFailures.isEmpty()) {
-                retryMode = true;
-                report.section("Etape 1 : mode RETRY (echecs precedents detectes)");
-                report.log("  " + previousFailures.size() + " test(s) en echec a relancer depuis "
-                                   + tracker.getReportFile().getName());
-                report.log("  Le workflow STARTS normal reprendra une fois tous les echecs corriges.");
-                affectedTests = new java.util.LinkedHashSet<>(previousFailures);
-            } else {
-                report.section("Etape 1 : calcul des tests affectes (mode STARTS normal)");
-                affectedTests = selector.computeAffectedTests();
-            }
+            previousFailures = tracker.readFailedTests();
         } catch (Exception e) {
-            report.warn("Lecture failed-tests.txt impossible, mode STARTS normal : " + e.getMessage());
-            affectedTests = selector.computeAffectedTests();
+            report.warn("Lecture failed-tests.txt impossible : " + e.getMessage());
+            previousFailures = java.util.Collections.emptyList();
+        }
+
+        if (!previousFailures.isEmpty()) {
+            int before = affectedTests.size();
+            // FQN -> nom simple pour matcher selected-tests (qui utilise des FQN aussi)
+            affectedTests.addAll(previousFailures);
+            int added = affectedTests.size() - before;
+            report.log("  STARTS (changements courants)  : " + startsCount + " test(s)");
+            report.log("  Echecs precedents a re-verifier : " + previousFailures.size()
+                               + " (" + added + " ajoute(s) a la selection)");
+            report.log("  Total                          : " + affectedTests.size() + " test(s)");
+        } else {
+            report.log("  " + affectedTests.size() + " test(s) selectionne(s) par STARTS");
         }
 
         if (affectedTests.isEmpty()) {
@@ -219,14 +231,16 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         boolean failsafeRan = false;
 
         try (PropertiesGuard guard = new PropertiesGuard(propsFile, report)) {
-            // Patcher framework2.properties EN PREMIER, avant le build config-dev,
-            // pour que la JAR soit generee avec ACTIVER_HIBERNATE=false
+            // Patcher framework2.properties EN PREMIER, avant tout build,
+            // pour que les JAR soient generees avec ACTIVER_HIBERNATE=false
             guard.disable("ACTIVER_HIBERNATE");
 
             // ----------------------------------------------------------------
-            // Pre-requis commun TU + TI : build config-dev avec le fichier patche
+            // Pre-requis (compilation reactor + config-dev) : desormais
+            // assures par le script shell AVANT l'appel a STARTS, via
+            //   mvn -pl <modules> -am install -DskipTests
+            // Le plugin ne compile plus : il suppose les .class deja presents.
             // ----------------------------------------------------------------
-            runner.buildConfigDev();
 
             // ----------------------------------------------------------------
             // ETAPE 4 - Surefire (TU)
@@ -264,7 +278,7 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
                 report.log("");
                 report.log("  " + failed.size() + " test(s) en echec sauvegarde(s) dans "
                                    + tracker.getReportFile().getName());
-                report.log("  Lancer starts:retry-failed pour les relancer uniquement.");
+                report.log("  Au prochain run, ces tests seront ajoutes a la selection STARTS.");
             }
         } catch (Exception e) {
             report.warn("Impossible de sauvegarder les tests en echec : " + e.getMessage());
