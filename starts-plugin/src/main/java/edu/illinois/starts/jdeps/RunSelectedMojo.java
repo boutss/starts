@@ -250,6 +250,16 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
             report.log("  " + affectedTests.size() + " test(s) selectionne(s) par STARTS");
         }
 
+        // Lister les tests selectionnes (tries pour la lisibilite)
+        if (!affectedTests.isEmpty()) {
+            List<String> sortedTests = new java.util.ArrayList<>(affectedTests);
+            java.util.Collections.sort(sortedTests);
+            report.log("  Tests selectionnes :");
+            for (String t : sortedTests) {
+                report.log("    - " + t);
+            }
+        }
+
         if (affectedTests.isEmpty()) {
             report.log("[OK] Aucun test affecte. Rien a lancer.");
             report.writeToFile(getProject().getBasedir());
