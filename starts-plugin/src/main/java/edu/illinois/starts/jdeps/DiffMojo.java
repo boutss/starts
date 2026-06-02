@@ -78,7 +78,14 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
         }
     }
 
+    /** Cache du dernier computeChangeData pour eviter de relire le ZLC plusieurs fois. */
+    private transient Pair<Set<String>, Set<String>> cachedChangeData;
+    private transient boolean changeDataComputed = false;
+
     public Pair<Set<String>, Set<String>> computeChangeData(boolean writeChanged) throws MojoExecutionException {
+        if (changeDataComputed) {
+            return cachedChangeData;
+        }
         long start = System.currentTimeMillis();
         Pair<Set<String>, Set<String>> data = null;
         if (depFormat == DependencyFormat.ZLC) {
@@ -91,6 +98,8 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
         Writer.writeToFile(changed, CHANGED_CLASSES, getArtifactsDir());
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] COMPUTING CHANGES: " + Writer.millsToSeconds(end - start));
+        cachedChangeData = data;
+        changeDataComputed = true;
         return data;
     }
 

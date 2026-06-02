@@ -123,6 +123,29 @@ public class MavenTestRunner {
                                      String goals, boolean isFailsafe)
             throws MojoExecutionException {
 
+        // Filtrer les tests dont le .class n'existe plus (supprimes/renommes
+        // depuis le dernier run mais encore references dans deps.zlc /
+        // selected-tests / failed-tests.txt). Evite "No tests matching" et les
+        // faux echecs sur des tests fantomes.
+        List<String> existing = new ArrayList<>();
+        List<String> missing  = new ArrayList<>();
+        for (String simpleName : testClasses) {
+            if (testClassExists(simpleName)) {
+                existing.add(simpleName);
+            } else {
+                missing.add(simpleName);
+            }
+        }
+        if (!missing.isEmpty()) {
+            report.log("  [ignore] " + missing.size()
+                               + " test(s) inexistant(s) (.class absent) : " + missing);
+        }
+        if (existing.isEmpty()) {
+            report.log("  Aucun test existant a lancer.");
+            return true;
+        }
+        testClasses = existing;
+
         // Determiner la taille de chunk : moyenne ~30 chars/nom + virgules = ~32
         // Limite Windows 8191, on garde une marge pour les autres args -> ~6000 chars utiles
         final int maxCharsPerChunk = 6000;
@@ -182,6 +205,39 @@ public class MavenTestRunner {
      * Decoupe une liste de noms de tests en lots dont la concatenation
      * (separateur virgule) ne depasse pas maxChars.
      */
+    /**
+     * Verifie qu'un test (nom simple, ex: TestFoo) a bien un .class present
+     * dans le repertoire test-classes du module. Recherche recursive car les
+     * tests sont organises en sous-packages.
+     *
+     * @param simpleName nom simple de la classe de test
+     * @return true si un fichier <simpleName>.class existe sous test-classes
+     */
+    private boolean testClassExists(String simpleName) {
+        File testClassesDir = new File(project.getBuild().getTestOutputDirectory());
+        if (!testClassesDir.isDirectory()) {
+            return false;
+        }
+        return findClassFile(testClassesDir, simpleName + ".class");
+    }
+
+    private static boolean findClassFile(File dir, String fileName) {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File f : children) {
+            if (f.isDirectory()) {
+                if (findClassFile(f, fileName)) {
+                    return true;
+                }
+            } else if (f.getName().equals(fileName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static List<List<String>> splitIntoChunks(List<String> tests, int maxChars) {
         List<List<String>> chunks = new ArrayList<>();
         List<String> current = new ArrayList<>();

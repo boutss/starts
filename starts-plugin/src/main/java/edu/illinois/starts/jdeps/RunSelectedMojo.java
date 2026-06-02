@@ -8,6 +8,8 @@ import java.io.File;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+
+import edu.illinois.starts.util.Pair;
 import java.util.logging.Level;
 
 import edu.illinois.starts.constants.StartsConstants;
@@ -203,6 +205,24 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         // les changements en cours.
         // --------------------------------------------------------------------
         report.section("Etape 1 : calcul des tests affectes");
+
+        // Afficher les classes modifiees detectees (utile pour comprendre la
+        // selection). computeChangeData retourne (nonAffected, changedClasses).
+        try {
+            Pair<Set<String>, Set<String>> changeData = computeChangeData(false);
+            Set<String> changed = changeData.getValue();
+            if (changed != null && !changed.isEmpty()) {
+                report.log("  Classes modifiees : " + changed.size());
+                for (String url : changed) {
+                    report.log("    - " + urlToFqn(url));
+                }
+            } else {
+                report.log("  Aucune classe modifiee depuis le dernier run.");
+            }
+        } catch (Exception e) {
+            report.warn("Impossible d'afficher les classes modifiees : " + e.getMessage());
+        }
+
         Set<String> affectedTests = new LinkedHashSet<>(selector.computeAffectedTests());
         int startsCount = affectedTests.size();
 
@@ -364,5 +384,32 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
             throw new MojoExecutionException(
                     "Des tests ont echoue. Consultez les logs ci-dessus.");
         }
+    }
+
+    /**
+     * Convertit une URL fichier ZLC en FQN Java lisible.
+     * Exemple : file:/D:/.../target/classes/com%5cfoo%5cBar.class -> com.foo.Bar
+     */
+    private static String urlToFqn(String url) {
+        if (url == null) {
+            return "?";
+        }
+        int testIdx    = url.indexOf("/test-classes/");
+        int classesIdx = url.indexOf("/classes/");
+        int start;
+        if (testIdx >= 0) {
+            start = testIdx + "/test-classes/".length();
+        } else if (classesIdx >= 0) {
+            start = classesIdx + "/classes/".length();
+        } else {
+            return url;
+        }
+        String rel = url.substring(start);
+        if (rel.endsWith(".class")) {
+            rel = rel.substring(0, rel.length() - 6);
+        }
+        return rel.replace("%5c", ".").replace("%5C", ".")
+                .replace("%2f", ".").replace("%2F", ".")
+                .replace('/', '.').replace('\\', '.');
     }
 }
