@@ -226,26 +226,25 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         Set<String> affectedTests = new LinkedHashSet<>(selector.computeAffectedTests());
         int startsCount = affectedTests.size();
 
-        FailedTestsTracker tracker = workDir != null && !workDir.isEmpty()
-                ? new FailedTestsTracker(new File(workDir))
-                : new FailedTestsTracker(getProject().getBasedir());
+        // Mode RETRY : le failed-tests.txt est LOCAL au module (pas le workDir
+        // partage, qui melangeait les modules). S'il existe et n'est pas vide,
+        // on ne rejoue QUE ces echecs et on IGNORE les changements courants,
+        // jusqu'a ce que tout soit vert. Ensuite on revient au mode STARTS normal.
+        FailedTestsTracker localTracker = new FailedTestsTracker(getProject().getBasedir());
         List<String> previousFailures;
         try {
-            previousFailures = tracker.readFailedTests();
+            previousFailures = localTracker.readFailedTests();
         } catch (Exception e) {
             report.warn("Lecture failed-tests.txt impossible : " + e.getMessage());
             previousFailures = java.util.Collections.emptyList();
         }
 
         if (!previousFailures.isEmpty()) {
-            int before = affectedTests.size();
-            // FQN -> nom simple pour matcher selected-tests (qui utilise des FQN aussi)
-            affectedTests.addAll(previousFailures);
-            int added = affectedTests.size() - before;
-            report.log("  STARTS (changements courants)  : " + startsCount + " test(s)");
-            report.log("  Echecs precedents a re-verifier : " + previousFailures.size()
-                               + " (" + added + " ajoute(s) a la selection)");
-            report.log("  Total                          : " + affectedTests.size() + " test(s)");
+            // RETRY PUR : on remplace la selection par les seuls echecs precedents.
+            affectedTests = new LinkedHashSet<>(previousFailures);
+            report.log("  MODE RETRY : " + previousFailures.size()
+                               + " echec(s) precedent(s) a re-verifier (changements courants ignores)");
+            report.log("  (les " + startsCount + " test(s) STARTS reprendront une fois tout vert)");
         } else {
             report.log("  " + affectedTests.size() + " test(s) selectionne(s) par STARTS");
         }
@@ -349,11 +348,10 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         }
 
         // --------------------------------------------------------------------
-        // Sauvegarde des tests en echec dans le .starts LOCAL du module.
-        // En multi-module, le script shell agregera tous les failed-tests.txt
-        // locaux dans le workDir partage apres la serie de run-selected.
+        // Sauvegarde des tests en echec dans le .starts LOCAL du module
+        // (reutilise localTracker declare plus haut). En multi-module, le shell
+        // agrege ensuite tous les failed-tests.txt locaux dans le workDir.
         // --------------------------------------------------------------------
-        FailedTestsTracker localTracker = new FailedTestsTracker(getProject().getBasedir());
         try {
             List<String> failed = localTracker.recordFailuresFromReports(
                     new File(getProject().getBuild().getDirectory()));
