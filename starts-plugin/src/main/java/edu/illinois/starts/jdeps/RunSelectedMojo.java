@@ -166,10 +166,15 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         Logger logger = Logger.getGlobal();
         long start = System.currentTimeMillis();
 
-        // -- Auto-skip : modules sans repertoire de tests --------------------
-        // En reactor complet, beaucoup de modules n'ont pas de tests. On les
-        // ignore immediatement (pas de jdeps, pas de sous-process) pour ne pas
-        // payer le cout inutilement.
+        // -- Auto-skip : modules agregateurs (pom) ou sans tests -------------
+        // En reactor complet, beaucoup de modules n'ont pas de tests, et les
+        // poms agregateurs n'ont pas de plugin Surefire. On les ignore tout de
+        // suite (pas de jdeps, pas de sous-process).
+        if ("pom".equals(getProject().getPackaging())) {
+            logger.log(Level.INFO, "[STARTS] " + getProject().getArtifactId()
+                    + " : module agregateur (pom) - skip.");
+            return;
+        }
         File testSrcDir   = new File(getProject().getBasedir(), "src/test/java");
         File testClassDir = new File(getProject().getBuild().getTestOutputDirectory());
         boolean hasTestSources = testSrcDir.isDirectory()

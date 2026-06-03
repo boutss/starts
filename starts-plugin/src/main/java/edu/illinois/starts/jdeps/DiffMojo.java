@@ -62,6 +62,23 @@ public class DiffMojo extends BaseMojo implements StartsConstants {
     public void execute() throws MojoExecutionException {
         Logger.getGlobal().setLoggingLevel(Level.parse(loggingLevel));
 
+        // Auto-skip : modules agregateurs (packaging=pom) ou sans tests.
+        // Ils n'ont pas de plugin Surefire -> getSureFireClassPath planterait.
+        if ("pom".equals(getProject().getPackaging())) {
+            Logger.getGlobal().log(Level.INFO, "[STARTS] " + getProject().getArtifactId()
+                    + " : module agregateur (pom) - skip diff.");
+            return;
+        }
+        java.io.File testSrc = new java.io.File(getProject().getBasedir(), "src/test/java");
+        java.io.File testOut = new java.io.File(getProject().getBuild().getTestOutputDirectory());
+        boolean hasTests = (testSrc.isDirectory() && testSrc.list() != null && testSrc.list().length > 0)
+                || (testOut.isDirectory() && testOut.list() != null && testOut.list().length > 0);
+        if (!hasTests) {
+            Logger.getGlobal().log(Level.INFO, "[STARTS] " + getProject().getArtifactId()
+                    + " : aucun test - skip diff.");
+            return;
+        }
+
         Set<String> changed = new HashSet<>();
         Set<String> nonAffected = new HashSet<>();
         Pair<Set<String>, Set<String>> data = computeChangeData(false);
