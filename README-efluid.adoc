@@ -5,17 +5,19 @@
 :source-highlighter: highlight.js
 :sectnums:
 
-Fork du plugin Maven https://github.com/TestingResearchIllinois/starts[STARTS] (Université d'Illinois) adapté aux besoins efluid : sélection statique des tests à exécuter, parallélisme, suivi des échecs entre runs, et outils de débug du graphe de dépendances.
+Fork du plugin Maven https://github.com/TestingResearchIllinois/starts[STARTS] (Universite d'Illinois) adapte aux besoins efluid : selection statique des tests, support multi-modules, parallelisme, suivi des echecs entre runs (mode RETRY), et outils de debug du graphe de dependances.
 
 == Vue d'ensemble
 
-STARTS analyse statiquement les dépendances entre classes via `jdeps`, calcule les checksums des classes compilées, et entre deux runs, n'exécute que les tests affectés par les classes modifiées.
+STARTS analyse statiquement les dependances entre classes via `jdeps`, calcule les checksums des classes compilees, et entre deux runs n'execute que les tests affectes par les classes modifiees.
 
-Trois améliorations principales par rapport à l'original :
+Principales adaptations efluid :
 
-* Workflow `run-selected` qui chaîne Surefire (TU) + Failsafe (TI) avec initialisation BDD locale et patch automatique de `framework2.properties`
-* Suivi automatique des échecs : les tests KO d'un run sont ajoutés à la sélection du run suivant
-* Goal `debug-paths` : affiche le plus court chemin entre une classe modifiée et chaque test sélectionné, pour identifier le code glue
+* Workflow `run-selected` qui enchaine Surefire (TU) + Failsafe (TI), avec patch automatique de `framework2.properties` et initialisation BDD locale
+* Support multi-modules : STARTS s'execute sur chaque module du reactor, chacun selectionnant ses tests affectes
+* Mode RETRY : tant qu'un module a des tests en echec, seuls ces tests sont rejoues
+* Goal `debug-paths` : plus court chemin entre une classe modifiee et chaque test, pour identifier le code glue
+* Optimisations de build : exclusion des modules npm, desactivation de la recompilation incrementale agressive
 
 == Installation
 
@@ -27,227 +29,208 @@ cd starts/
 mvn clean install -DskipTests
 ----
 
-Le plugin est installé dans le `.m2` local sous `edu.illinois:starts-maven-plugin:1.5-SNAPSHOT`.
+IMPORTANT: A relancer apres chaque modification du code du plugin.
 
-=== Déclaration dans le pom du projet
-
-[source,xml]
-----
-<plugins>
-  <plugin>
-    <groupId>edu.illinois</groupId>
-    <artifactId>starts-maven-plugin</artifactId>
-    <version>1.5-SNAPSHOT</version>
-  </plugin>
-</plugins>
-----
-
-Pas besoin d'ajouter `edu.illinois` à `pluginGroups` : les scripts shell utilisent les coordonnées complètes du plugin.
-
-== Workflow quotidien
-
-Quatre scripts shell dans `archi/scripts/starts/` couvrent les besoins courants.
-
-=== init-graph-archi.sh / init-graph-ecore.sh
-
-Repart sur une base propre : supprime `.starts/` et recalcule le graphe complet + checksums de référence, **sans exécuter de tests**.
-
-À lancer :
-
-* après un `git pull` important / merge / changement de branche
-* si le graphe semble incohérent
+=== Verification
 
 [source,bash]
 ----
-./init-graph-archi.sh
-# 1/2 : starts:clean      → supprime .starts/
-# 2/2 : starts:diff        → reconstruit le graphe avec jdeps
+mvn help:describe -Dplugin=edu.illinois:starts-maven-plugin:1.5-SNAPSHOT -Dgoal=run-selected
 ----
 
-=== run-tests-archi.sh / run-tests-ecore.sh
+NOTE: Les invocations directes en ligne de commande (`mvn groupId:artifactId:goal`) ne lisent PAS le `pluginManagement`. La version `1.5-SNAPSHOT` est donc indiquee explicitement dans tous les scripts. C'est une limitation Maven connue (MNG-4965).
 
-Le workflow principal. Détecte les classes modifiées, calcule les tests affectés, lance Surefire (TU) puis Failsafe (TI), gère les pré-requis BDD.
+== Scripts
+
+Trois scripts dans `archi/scripts/starts/`. ecore etant un sous-module du reactor archi, il est couvert automatiquement par le mode reactor complet.
+
+=== run-tests.sh
+
+Le workflow principal.
 
 [source,bash]
 ----
-./run-tests-archi.sh
+./run-tests.sh                  # tout le reactor (incl. ecore)
+./run-tests.sh app              # uniquement le module app
+./run-tests.sh ws/archi-rest    # uniquement ce module
+MODULE=app ./run-tests.sh       # equivalent via variable
+./run-tests.sh app -DsurefireForkCount=8   # options Maven en plus
 ----
 
-Étapes internes :
+Etapes :
 
 [arabic]
-. Calcul des tests à lancer : UNION (STARTS sur changements courants) + (tests en échec du run précédent)
-. Patch de `framework2.properties` (`ACTIVER_HIBERNATE=false`)
-. Build `config-dev` (mvn install -DskipTests) — JAR à jour dans `.m2`
-. Surefire (TU) : 4 JVM en parallèle, JVM réutilisées entre classes
-. Initialisation BDD locale via le script `UL-base-validation.sh`
-. Failsafe (TI) : 1 JVM (séquentiel par défaut pour isolation BDD)
-. Restauration de `framework2.properties`
-. Sauvegarde des tests en échec dans `.starts/failed-tests.txt`
-. Si tout passe : mise à jour des checksums STARTS
+. Compilation des modules + dependances (multi-thread, sans recompilation totale)
+. `starts:prepare` (1 fois) : patch `framework2.properties` + init BDD
+. `starts:run-selected` : selection + execution des tests, par module
+. Agregation des echecs + restauration de `framework2.properties`
+. Bilan des temps (compilation / BDD / tests / total)
 
-=== debug-paths-archi.sh / debug-paths-ecore.sh
+=== init-graph.sh
 
-Analyse le graphe de dépendances pour identifier le code glue. N'exécute aucun test, ne modifie pas les checksums.
+Repart sur une base propre : supprime les `.starts/` et recalcule graphe + checksums, sans executer de tests.
 
 [source,bash]
 ----
-./debug-paths-archi.sh
-# Tous les couples (classe modifiee × test affecté)
-
-./debug-paths-archi.sh -DforClass=FiltreRequete
-# Tous les chemins depuis une classe (matching par substring)
-
-./debug-paths-archi.sh -DforTest=TestFiltreRequete
-# Tous les chemins arrivant à un test
+./init-graph.sh                 # tout le reactor
+./init-graph.sh app             # uniquement app
+./init-graph.sh echange         # uniquement echange (utile pour purger un module)
 ----
 
-Résultat dans `.starts/debug-paths.txt` :
+A lancer apres un `git pull` important, un changement de branche, ou si le graphe semble incoherent.
 
-[source]
-----
-## com.example.MaClasseModifiee -> 3 test(s)
-  com.example.MaClasseModifiee -> com.example.Service -> com.example.TestService
-  com.example.MaClasseModifiee -> com.example.TestMaClasseModifiee
-  com.example.MaClasseModifiee -> com.example.Helper -> com.example.TestHelper
-----
+=== debug-paths.sh
 
-Algorithme : pour chaque test affecté, on trouve la classe modifiée **la plus directement responsable** (chemin le plus court dans le graphe). Un test = une raison principale. Les chemins indirects via couplage transitif sont écartés.
-
-== Workflow "fix & retry"
-
-Les tests en échec sont automatiquement re-vérifiés au prochain run :
+Analyse le graphe pour identifier pourquoi un test est selectionne. N'execute aucun test.
 
 [source,bash]
 ----
-./run-tests-archi.sh
-# 357 tests → 5 echecs → failed-tests.txt cree avec 5 FQN
-
-# Correction du code
-
-./run-tests-archi.sh
-# Calcul : STARTS (changements courants) + 5 echecs precedents
-# Total : par exemple 12 tests (l'union)
-# Si tous passent → failed-tests.txt supprime, checksums maj
-# Sinon → fichier epure (ceux qui passent retirés)
+./debug-paths.sh                              # tous les couples
+./debug-paths.sh -DforClass=FiltreRequete     # depuis une classe (substring)
+./debug-paths.sh -DforTest=TestFiltreRequete  # vers un test
 ----
 
-NOTE: L'union garantit qu'un fix qui casse silencieusement un autre test est détecté immédiatement.
-
-== Paramètres importants
-
-Tous surchargeables via `-D` en ligne de commande.
-
-|===
-| Paramètre | Défaut | Description
-
-| `exclureArchiDep`        | `true`  | Exclut `com.efluid.*`, `com.hermes.arc.*` du graphe jdeps (false pour le projet archi lui-même)
-| `surefireForkCount`      | `4`     | Nombre de JVM en parallèle pour les TU (Surefire). JVM réutilisées (`reuseForks=true`)
-| `failsafeForkCount`      | `1`     | Idem pour les TI (Failsafe). JVM neuve par classe (`reuseForks=false`). Augmenter avec prudence (isolation BDD)
-| `maxItTests`             | `200`   | Limite TI. Au-delà, Failsafe est sauté
-| `updateChecksums`        | `true`  | Met à jour `.starts/deps.zlc` après succès
-| `propertiesFile`         | -       | Chemin du `framework2.properties` à patcher
-| `configDevPomPath`       | -       | Chemin du pom config-dev à builder
-| `initDbScriptPath`       | -       | Chemin du script bash d'init BDD
-| `logsDir`                | -       | Répertoire des logs horodatés
-| `forClass` / `forTest`   | -       | (debug-paths uniquement) Filtre par substring FQN
-| `maxPathsPerClass`       | `50`    | (debug-paths) Limite par classe modifiée
-| `loggingLevel`           | `CONFIG`| Niveau de log STARTS. `FINEST` pour le diagnostic
-|===
-
-== Structure des fichiers générés
+Resultat dans `.starts/debug-paths.txt` :
 
 [source]
 ----
-.starts/
-  deps.zlc            # Index inverse : checksum + tests dépendants
-  graph               # Graphe complet (source destination par ligne)
-  selected-tests      # FQN des tests sélectionnés au dernier run
-  all-tests           # FQN de tous les tests détectés
-  failed-tests.txt    # Tests en échec — relancés automatiquement
-  debug-paths.txt     # Sortie de debug-paths
-  jdeps-cache/        # Cache des graphes par JAR tiers
-
-target/
-  surefire-includes.txt   # Liste des tests passée à Surefire en -Dtest=...
-  failsafe-includes.txt   # Idem pour Failsafe
-  surefire-reports/       # Vidé avant chaque run
-  failsafe-reports/       # Idem
-
-scripts/starts/logs/
-  archi-jar-YYYYMMDD_HHMMSS.log    # Log horodaté de chaque run
+## com.example.MaClasse -> 3 test(s)
+  com.example.MaClasse -> com.example.Service -> com.example.TestService
+  com.example.MaClasse -> com.example.TestMaClasse
 ----
 
-== Goals Maven disponibles
+Pour chaque test, le chemin le plus court vers la classe modifiee la plus directement responsable. Un test = une raison principale.
+
+== Mode RETRY (fix & retry)
+
+Les tests en echec sont rejoues automatiquement au run suivant, par module.
+
+[source,bash]
+----
+./run-tests.sh app
+# 50 tests, 3 echecs -> app/.starts/failed-tests.txt cree
+
+# correction du code
+
+./run-tests.sh app
+# MODE RETRY : seuls les 3 echecs rejoues (changements courants ignores)
+# 1 echoue encore -> failed-tests.txt = 1
+
+./run-tests.sh app
+# MODE RETRY : seul le dernier
+# vert -> failed-tests.txt supprime, checksums mis a jour
+
+./run-tests.sh app
+# retour au mode STARTS normal
+----
+
+Comportement : tant que `<module>/.starts/failed-tests.txt` n'est pas vide, on ne rejoue QUE ces echecs. Une fois tout vert, retour a la selection STARTS normale.
+
+NOTE: Le fichier `failed-tests.txt` est LOCAL a chaque module. Le fichier agrege `scripts/starts/work/failed-tests.txt` est en LECTURE SEULE (consultation de tous les echecs d'un coup) ; le modifier n'a aucun effet sur les runs.
+
+Pour forcer un re-run complet : `./init-graph.sh`.
+
+== Parametres importants
+
+Surchargeables via `-D`.
+
+|===
+| Parametre | Defaut | Description
+
+| `exclureArchiDep`     | `true`  | Exclut `com.efluid.*`, `com.hermes.arc.*` du graphe jdeps (false pour archi lui-meme)
+| `surefireForkCount`   | `4`     | JVM en parallele pour les TU (reuseForks=true)
+| `failsafeForkCount`   | `1`     | JVM pour les TI (reuseForks=false, isolation BDD)
+| `skipDbInit`          | `false` | Si true, n'initialise pas la BDD (deja fait par prepare en multi-module)
+| `skipPropertiesPatch` | `false` | Si true, ne patche pas framework2.properties (deja fait par prepare)
+| `workDir`             | -       | Repertoire de travail partage (consultation des echecs agreges)
+| `updateChecksums`     | `true`  | Met a jour les checksums apres succes
+| `forClass` / `forTest`| -       | (debug-paths) Filtre par substring FQN
+| `maxPathsPerClass`    | `1000`  | (debug-paths) Limite de chemins par classe modifiee
+|===
+
+== Optimisations de build
+
+Le build complet passait de ~8 min a ~2 min grace a :
+
+`-Dmaven.compiler.useIncrementalCompilation=false`:: Casse le cercle vicieux ou le JAR regenere par `install` etait detecte comme "nouvelle dependance", declenchant une recompilation totale. Avec ce reglage, seuls les fichiers reellement modifies sont recompiles.
+
+Exclusion des modules npm:: Les modules front (`frontend-maven-plugin`) sont exclus du build et de l'analyse via `EXCLUDED_MODULES` en haut du script :
++
+[source,bash]
+----
+EXCLUDED_MODULES='!com.efluid:archi-js-ressources-a-copier,!com.efluid:archi-js-test-serveur-cti,!com.efluid:archi-js-composants-webjar,!com.efluid:archi-frontend'
+----
+
+Auto-skip:: Les modules de type `pom` (agregateurs) et ceux sans `src/test/java` sont ignores immediatement, sans cout.
+
+Compilation deleguee au shell:: Le plugin ne recompile plus (`@Execute(TEST_COMPILE)` retire). La compilation est faite une seule fois par le script, et Surefire est invoque via le goal direct `surefire:test` (pas la phase `test`) pour ne pas relancer le cycle.
+
+== Goals Maven
 
 |===
 | Goal | Description
 
-| `starts:clean`         | Supprime `.starts/`
-| `starts:diff`          | Affiche classes modifiées + tests affectés (sans exécution). Avec `-DupdateDiffChecksums=true` : reconstruit le graphe et écrit `deps.zlc`
-| `starts:select`        | Calcule et écrit les tests sélectionnés sans les lancer
-| `starts:run-selected`  | Workflow complet : TU + TI + suivi échecs (utilisé par run-tests-*.sh)
-| `starts:debug-paths`   | Affiche les chemins classe modifiée → test (utilisé par debug-paths-*.sh)
-| `starts:impacted`      | Affiche les classes impactées par des changements
-| `starts:run`           | Workflow original STARTS (non utilisé chez efluid)
+| `starts:clean`        | Supprime `.starts/`
+| `starts:diff`         | Classes modifiees + tests affectes. Avec `-DupdateDiffChecksums=true` : reconstruit le graphe
+| `starts:prepare`      | Pre-requis globaux (patch properties + init BDD), 1 fois, non-recursif (`-N`)
+| `starts:run-selected` | Workflow complet : selection + TU + TI + suivi echecs
+| `starts:debug-paths`  | Chemins classe modifiee -> test
 |===
 
 == Architecture technique
 
-=== Classes principales (starts-core)
+=== Mojos (starts-plugin)
 
-* `ZLCHelper` : lecture/écriture du fichier `deps.zlc`, calcul des checksums
-* `Loadables` : construction du graphe via `jdeps`, application des filtres efluid (`exclureArchiDep`, `exclusions()`)
-* `Cache` : cache des graphes jdeps par JAR tiers
-* `data/ZLCData`, `ZLCFileContent`, `ZLCFormat` : modèle du fichier ZLC
+* `BaseMojo` -> `DiffMojo` -> `RunSelectedMojo` : hierarchie principale
+* `PrepareMojo` : pre-requis globaux
+* `DebugPathsMojo` : analyse des chemins
 
-=== Classes principales (starts-plugin)
+=== Runner
 
-* `BaseMojo` → `DiffMojo` → `RunSelectedMojo` : hiérarchie des Mojos
-* `DebugPathsMojo` : goal d'analyse des chemins
-* `runner/MavenTestRunner` : exécution Surefire/Failsafe via MavenInvoker
-* `runner/TestSelector` : calcul des tests affectés (TU vs TI)
-* `runner/PropertiesGuard` : patch + restauration de `framework2.properties`
-* `runner/FailedTestsTracker` : parsing des rapports XML, sauvegarde des échecs
-* `runner/ProgressWatcher` : suivi temps réel des tests via parsing console
-* `runner/PathFinder` : BFS pour les chemins de débug
-* `runner/RunReport` : logs combinés console + fichier horodaté
+* `MavenTestRunner` : execution Surefire/Failsafe (sous-process), decoupage en lots, filtre des tests inexistants
+* `TestSelector` : calcul des tests affectes, separation TU/TI
+* `PropertiesGuard` : patch + restauration de framework2.properties
+* `FailedTestsTracker` : parsing XML, suivi des echecs (failed-tests.txt local)
+* `ProgressWatcher` : suivi temps reel des tests
+* `PathFinder` : BFS plus court chemin (debug-paths)
+* `RunReport` : logs combines console + fichier horodate
 
-== FAQ
-
-=== `Tests run: X` mais X < total demandé
-
-Surefire n'émet la ligne `Tests run:` que pour les classes ayant *effectivement* exécuté une méthode `@Test`. Les classes abstraites, utilitaires nommés `Test*` ou sans `@Test` ne comptent pas. Le log affiche le delta en fin de lot.
-
-=== "La ligne de commande est trop longue" sous Windows
-
-La liste de tests est découpée en lots de ~6000 caractères avant d'être passée en `-Dtest=...`. Le découpage est automatique.
-
-=== `debug-paths` retourne "aucun test propre"
-
-Cette classe modifiée n'atteint aucun test plus directement qu'une autre classe modifiée. Si vous voulez quand même voir tous les chemins (y compris longs), utilisez l'option `-DforClass=...` qui force l'analyse d'une classe spécifique.
-
-=== Comment forcer le relancement de tous les tests ?
-
-[source,bash]
-----
-./init-graph-archi.sh   # supprime .starts/, recalcule depuis zero
-# tout fichier sera vu comme "non modifie" → STARTS ne lance rien
-# il faut alors modifier au moins une classe pour qu'un test soit selectionne
-----
-
-Pour vraiment lancer tous les tests sans STARTS : `mvn test failsafe:integration-test` directement, sans le plugin.
-
-== Versionning
-
-Le `DebugPathsMojo` affiche sa version dans la console et le fichier de sortie :
+=== Fichiers generes
 
 [source]
 ----
-==================================================
-  STARTS : debug-paths
-  v5 - rattachement test->classe la plus proche (2026-06-01)
-==================================================
+<module>/.starts/
+  deps.zlc            # Index inverse classe -> tests dependants
+  graph               # Graphe (source destination par ligne), ecrit par init-graph
+  selected-tests      # FQN des tests selectionnes
+  failed-tests.txt    # Echecs du module (mecanisme RETRY)
+  debug-paths.txt     # Sortie debug-paths
+
+scripts/starts/
+  work/
+    failed-tests.txt  # Agregation LECTURE SEULE (consultation)
+  logs/
+    <module>-YYYYMMDD_HHMMSS.log
 ----
 
-À incrémenter dans la constante `DEBUG_PATHS_VERSION` à chaque modification de l'algorithme. Pratique pour confirmer qu'un rebuild a bien été pris en compte.
+== FAQ
+
+=== Un test supprime est encore execute
+
+Un `.class` orphelin peut subsister dans `target/test-classes`, ou un vieux graphe le referencer. Le plugin filtre les tests dont le `.class` n'existe plus, mais pour purger : `./init-graph.sh <module>`.
+
+=== "Surefire plugin not available"
+
+Module de type `pom` (agregateur). Gere par l'auto-skip ; si l'erreur apparait, verifier que le plugin est a jour.
+
+=== La compilation prend toujours 8 min
+
+Verifier que `-Dmaven.compiler.useIncrementalCompilation=false` est bien dans le script et que le plugin est rebuilde. Un second build sans modification doit afficher `Nothing to compile` sur la quasi-totalite des modules.
+
+=== Forcer le relancement de tous les tests
+
+`./init-graph.sh` supprime les `.starts/` : au run suivant, plus rien n'est considere comme modifie. Modifier une classe declenche alors la selection des tests affectes.
+
+== Versionning du debug-paths
+
+`DebugPathsMojo` affiche sa version en console et dans le fichier de sortie (constante `DEBUG_PATHS_VERSION`). Pratique pour confirmer qu'un rebuild a ete pris en compte.
