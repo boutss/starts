@@ -157,6 +157,16 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
     @Parameter(property = "workDir", defaultValue = "")
     private String workDir;
 
+    /**
+     * Si true, le Mojo leve une MojoExecutionException quand des tests echouent
+     * (le module est marque KO pour Maven). En multi-module/reactor, mettre
+     * false : les echecs sont seulement enregistres dans failed-tests.txt, et
+     * tous les modules continuent de tourner (Maven ne skippe pas les dependants).
+     * Defaut : true (mono-module).
+     */
+    @Parameter(property = "failOnError", defaultValue = "true")
+    private boolean failOnError;
+
     // =========================================================================
     // Point d'entree
     // =========================================================================
@@ -392,10 +402,18 @@ public class RunSelectedMojo extends DiffMojo implements StartsConstants {
         report.log("  Duree totale : " + Writer.millsToSeconds(end - start) + " s");
         report.writeToFile(getProject().getBasedir());
 
-        // Propager l'echec a Maven
+        // Propager l'echec a Maven uniquement si failOnError=true (mono-module).
+        // En reactor (failOnError=false), on n'echoue PAS le module : les echecs
+        // sont dans failed-tests.txt, et tous les modules continuent (sinon Maven
+        // skipperait les modules dependants du module en echec).
         if (!allOk) {
-            throw new MojoExecutionException(
-                    "Des tests ont echoue. Consultez les logs ci-dessus.");
+            if (failOnError) {
+                throw new MojoExecutionException(
+                        "Des tests ont echoue. Consultez les logs ci-dessus.");
+            } else {
+                report.log("  [INFO] Des tests ont echoue (enregistres dans failed-tests.txt).");
+                report.log("         Build poursuivi (failOnError=false).");
+            }
         }
     }
 

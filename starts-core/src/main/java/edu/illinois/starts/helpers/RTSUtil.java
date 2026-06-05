@@ -89,6 +89,12 @@ public class RTSUtil implements StartsConstants {
         List<String> lines = Arrays.asList(jdepsOutput.toString().split(System.lineSeparator()));
         for (String line : lines) {
             String[] parts = line.split("->");
+            // Ignorer les lignes sans "->" (en-tetes, lignes vides, resumes de
+            // jdeps sur les .jar quand useThirdParty=true) : sinon parts[1] leve
+            // ArrayIndexOutOfBoundsException.
+            if (parts.length < 2) {
+                continue;
+            }
             String left = parts[0].trim();
             if (left.startsWith(CLASSES) || left.startsWith(TEST_CLASSES) || left.endsWith(JAR_EXTENSION)) {
                 continue;

@@ -40,7 +40,7 @@ import org.apache.maven.surefire.booter.SurefireExecutionException;
 /**
  * Base MOJO for the JDeps-Based STARTS.
  */
-public abstract class BaseMojo extends SurefireMojo implements StartsConstants {
+abstract class BaseMojo extends SurefireMojo implements StartsConstants {
     static final String STAR = "*";
 
     @Parameter(defaultValue = "${localRepository}", readonly = true, required = true)
@@ -76,7 +76,7 @@ public abstract class BaseMojo extends SurefireMojo implements StartsConstants {
      * Path to directory that contains the result of running jdeps on third-party
      * and standard library jars that an application may need, e.g., those in M2_REPO.
      */
-    @Parameter(property = "gCache", defaultValue = "${basedir}${file.separator}jdeps-cache")
+    @Parameter(property = "gCache", defaultValue = "${basedir}${file.separator}.starts${file.separator}jdeps-cache")
     protected String graphCache;
 
     /**
@@ -234,7 +234,7 @@ public abstract class BaseMojo extends SurefireMojo implements StartsConstants {
         File libraryFile = new File(jdepsCache, "jdk.graph");
         // Create the Loadables object early so we can use its helpers
         Loadables loadables = new Loadables(classesToAnalyze, artifactsDir, sfPathString,
-                useThirdParty, filterLib, jdepsCache);
+                                            useThirdParty, filterLib, jdepsCache);
         // Surefire Classpath object is easier to iterate over without de-constructing
         // sfPathString (which we use in a number of other places)
         loadables.setSurefireClasspath(sfClassPath);
@@ -260,7 +260,7 @@ public abstract class BaseMojo extends SurefireMojo implements StartsConstants {
         // nonAffected tests.
         Set<String> affected = depFormat == DependencyFormat.ZLC ? null
                 : RTSUtil.computeAffectedTests(new HashSet<>(classesToAnalyze),
-                nonAffected, transitiveClosure);
+                                               nonAffected, transitiveClosure);
         long end = System.currentTimeMillis();
         Logger.getGlobal().log(Level.FINE, "[PROFILE] prepareForNextRun(loadMoreEdges): "
                 + Writer.millsToSeconds(loadMoreEdges - start));

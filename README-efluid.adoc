@@ -154,12 +154,16 @@ Le build complet passait de ~8 min a ~2 min grace a :
 
 `-Dmaven.compiler.useIncrementalCompilation=false`:: Casse le cercle vicieux ou le JAR regenere par `install` etait detecte comme "nouvelle dependance", declenchant une recompilation totale. Avec ce reglage, seuls les fichiers reellement modifies sont recompiles.
 
-Exclusion des modules npm:: Les modules front (`frontend-maven-plugin`) sont exclus du build et de l'analyse via `EXCLUDED_MODULES` en haut du script :
+Exclusion des modules npm:: Les modules 100% front (`frontend-maven-plugin`) sont exclus du build et de l'analyse via `EXCLUDED_MODULES` en haut du script :
 +
 [source,bash]
 ----
 EXCLUDED_MODULES='!com.efluid:archi-js-ressources-a-copier,!com.efluid:archi-js-test-serveur-cti,!com.efluid:archi-js-composants-webjar,!com.efluid:archi-frontend'
 ----
+
+`-Dskip.node=true`:: Pour les modules qui contiennent a la fois du Java testable ET une partie front (ex: `archi-batch-launcher-ui`), on ne peut pas les exclure sans perdre leurs tests. La config des poms efluid branche le `frontend-maven-plugin` sur la property `${skip.node}` : passer `-Dskip.node=true` desactive toutes les etapes npm/node (install, build front) tout en gardant la compilation et les tests Java. C'est preferable a l'exclusion quand le module a du Java utile.
++
+En resume : module 100% front -> `EXCLUDED_MODULES` ; module mixte Java+front -> `-Dskip.node=true`.
 
 Auto-skip:: Les modules de type `pom` (agregateurs) et ceux sans `src/test/java` sont ignores immediatement, sans cout.
 
