@@ -130,10 +130,27 @@ public class Cache implements StartsConstants {
         Set<String> jars = new HashSet<>();
         String[] splitCP = sfPathString.split(File.pathSeparator);
         for (int i = 0; i < splitCP.length; i++) {
-            if (splitCP[i].endsWith(JAR_EXTENSION)) {
+            if (splitCP[i].endsWith(JAR_EXTENSION) && isOwnModuleJar(splitCP[i])) {
                 jars.add(splitCP[i]);
             }
         }
         return jars;
+    }
+
+    /**
+     * Ne garde que les JARs des modules maison (com/efluid, com/hermes,
+     * com/imrglobal) pour l'analyse jdeps inter-modules. Les JARs tiers
+     * (jakarta, spring, java.*, io, net...) sont ignores : ils ne changent
+     * pas entre runs, et les analyser gonflerait le cache jdeps et ralentirait
+     * enormement chaque module (x174 en reactor complet).
+     *
+     * <p>Le chemin .m2 d'un JAR maison contient son groupId en sous-dossiers,
+     * ex: .../com/efluid/archi-jar/.../archi-jar-...jar
+     */
+    private static boolean isOwnModuleJar(String jarPath) {
+        String p = jarPath.replace('\\', '/');
+        return p.contains("/com/efluid/")
+                || p.contains("/com/hermes/")
+                || p.contains("/com/imrglobal/");
     }
 }
