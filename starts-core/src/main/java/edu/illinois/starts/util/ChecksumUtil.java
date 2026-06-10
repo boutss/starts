@@ -88,7 +88,11 @@ public class ChecksumUtil implements StartsConstants {
     }
 
     public static String toClassName(String fqn) {
-        return fqn.replace(DOT, File.separator) + CLASS_EXTENSION;
+        // IMPORTANT : ClassLoader.getResource() attend TOUJOURS des '/' (separateur
+        // de ressource Java), jamais File.separator. Sous Windows, File.separator
+        // vaut '\\' et getResource renvoie alors null pour toutes les classes des
+        // JARs (autres modules) -> aucun checksum jar:, pas de detection inter-module.
+        return fqn.replace(DOT, "/") + CLASS_EXTENSION;
     }
 
     public static void saveCheckSums(Map<String, Set<RegData>> newCheckSums, String artifactsDir) {

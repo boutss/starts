@@ -138,6 +138,15 @@ public class ZLCHelper implements StartsConstants {
             if (ChecksumUtil.isWellKnownUrl(extForm) || (!useJars && extForm.startsWith("jar:"))) {
                 continue;
             }
+            // Filtre inter-module : ne checksummer dans les JARs que NOS modules
+            // (com.efluid, com.hermes, com.imrglobal). Les libs tierces (Spring,
+            // Apache, Hibernate, Jackson, jakarta...) ne changent pas entre deux
+            // runs : les checksummer serait du temps perdu et risquerait des
+            // sur-selections lors d'une montee de version. Les classes locales
+            // (file:) ne sont jamais filtrees.
+            if (extForm.startsWith("jar:") && !isOwnModuleClass(extForm)) {
+                continue;
+            }
 
             String checksum = checksumUtil.computeSingleCheckSum(url);
             BitSet bits = e.getValue();
@@ -171,6 +180,17 @@ public class ZLCHelper implements StartsConstants {
         return new ZLCFileContent(testList, zlcData, format);
     }
 
+
+    /**
+     * Indique si une URL jar: pointe vers une classe d'un module maison
+     * (com.efluid, com.hermes, com.imrglobal) plutot qu'une lib tierce.
+     * Permet de ne suivre les changements que de NOS modules dans les JARs.
+     */
+    private static boolean isOwnModuleClass(String jarUrl) {
+        return jarUrl.contains("!/com/efluid/")
+                || jarUrl.contains("!/com/hermes/")
+                || jarUrl.contains("!/com/imrglobal/");
+    }
 
     public static Pair<Set<String>, Set<String>> getChangedData(String artifactsDir, boolean cleanBytes) {
         long start = System.currentTimeMillis();

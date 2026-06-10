@@ -130,6 +130,51 @@ NOTE: Le fichier `failed-tests.txt` est LOCAL a chaque module. Le fichier agrege
 
 Pour forcer un re-run complet : `./init-graph.sh`.
 
+== Detection inter-modules
+
+Par defaut, STARTS est mono-module : il ne detecte que les changements du code
+source du module courant. Un changement dans un module dont depend le module
+teste (ex: une classe de `archi-jar` utilisee par un test de `archi-rest`)
+passait inapercu.
+
+Le fork efluid active `useThirdParty=true` par defaut, ce qui permet la
+detection inter-modules : STARTS calcule aussi le checksum des classes
+contenues dans les JARs des autres modules (`.m2`), avec un grain fin (classe
+par classe, pas le JAR entier).
+
+[source]
+----
+Classes modifiees : 1
+  - jar:file:/.../archi-jar-...jar!/com/hermes/arc/commun/type/TGPSPosition.class
+-> 9 test(s) selectionne(s)
+----
+
+Fonctionnement :
+
+* Chaque module produit son JAR dans `.m2` a chaque `install`.
+* STARTS checksumme chaque classe d'un JAR via son URL `jar:...!/...class`.
+* Si une classe change (CRC32 different), seuls les tests qui en dependent
+sont selectionnes, meme s'ils sont dans un autre module.
+
+Filtrage:: Seules les classes des modules maison (`com.efluid`, `com.hermes`,
+`com.imrglobal`) sont checksummees dans les JARs. Les librairies tierces
+(Spring, Hibernate, Apache CXF, Jackson, jakarta...) sont ignorees : elles ne
+changent pas entre deux runs, et les suivre gaspillerait du temps et
+provoquerait des sur-selections lors d'une montee de version.
+
+NOTE: La detection inter-modules suppose que les modules sont compiles ET
+installes dans `.m2` (ce que fait l'etape 1 des scripts via `install`). Si un
+JAR n'est pas a jour dans `.m2`, le changement n'est pas vu.
+
+[IMPORTANT]
+====
+Bug Windows corrige : `ChecksumUtil.toClassName` utilisait `File.separator`
+(`\` sous Windows) pour construire le chemin de ressource passe a
+`ClassLoader.getResource()`, qui attend TOUJOURS des `/`. Resultat : sous
+Windows, aucune classe de JAR n'etait resolue (`getResource` renvoyait null) et
+la detection inter-modules ne fonctionnait pas. Le fix force l'usage de `/`.
+====
+
 == Parametres importants
 
 Surchargeables via `-D`.
@@ -138,6 +183,7 @@ Surchargeables via `-D`.
 | Parametre | Defaut | Description
 
 | `exclureArchiDep`     | `true`  | Exclut `com.efluid.*`, `com.hermes.arc.*` du graphe jdeps (false pour archi lui-meme)
+| `useThirdParty`       | `true`  | Active la detection inter-modules (checksum des classes dans les JARs maison)
 | `surefireForkCount`   | `4`     | JVM en parallele pour les TU (reuseForks=true)
 | `failsafeForkCount`   | `1`     | JVM pour les TI (reuseForks=false, isolation BDD)
 | `skipDbInit`          | `false` | Si true, n'initialise pas la BDD (deja fait par prepare en multi-module)
