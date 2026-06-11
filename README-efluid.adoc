@@ -64,7 +64,10 @@ Etapes :
 . `starts:prepare` (1 fois) : patch `framework2.properties` + init BDD
 . `starts:run-selected` : selection + execution des tests, par module
 . Agregation des echecs + restauration de `framework2.properties`
-. Bilan des temps (compilation / BDD / tests / total)
+. Bilan des temps par phase (compilation / BDD / tests / total)
+
+Les deux scripts (`run-tests.sh` et `init-graph.sh`) affichent un bilan des
+temps par phase en fin d'execution, pour reperer ou va le temps.
 
 === init-graph.sh
 
@@ -81,25 +84,35 @@ A lancer apres un `git pull` important, un changement de branche, ou si le graph
 
 === debug-paths.sh
 
-Analyse le graphe pour identifier pourquoi un test est selectionne. N'execute aucun test.
+Analyse le graphe pour identifier POURQUOI un test est selectionne : il affiche
+le plus court chemin de dependance entre une classe et les tests. N'execute
+aucun test. Tres utile pour diagnostiquer une sur-selection (un test qui tourne
+sans raison apparente).
 
 [source,bash]
 ----
-./debug-paths.sh                              # tous les couples
-./debug-paths.sh -DforClass=FiltreRequete     # depuis une classe (substring)
-./debug-paths.sh -DforTest=TestFiltreRequete  # vers un test
+./debug-paths.sh ./demo                                  # un module
+./debug-paths.sh ./demo -DforClass=TGPSPosition          # depuis une classe (substring)
+./debug-paths.sh ./demo -DforTest=TestITStandardDelete   # vers un test
 ----
 
-Resultat dans `.starts/debug-paths.txt` :
+NOTE: Depuis la v8, `forClass`/`forTest` cherchent dans TOUT le graphe (pas
+seulement les classes modifiees). On peut donc tracer n'importe quelle classe,
+y compris une classe inter-module dans un JAR, sans avoir a la modifier au
+prealable.
+
+Resultat dans `<module>/.starts/debug-paths.txt` :
 
 [source]
 ----
-## com.example.MaClasse -> 3 test(s)
-  com.example.MaClasse -> com.example.Service -> com.example.TestService
-  com.example.MaClasse -> com.example.TestMaClasse
+## com.hermes.arc.commun.type.TGPSPosition -> 80 test(s)
+  TGPSPosition -> ArcAdresse -> ArcPersonne -> TestITUpdateRequestV2
+  TGPSPosition -> PolygoneGeographique -> ... -> TestVerificationInclusion...
 ----
 
-Pour chaque test, le chemin le plus court vers la classe modifiee la plus directement responsable. Un test = une raison principale.
+Chaque ligne montre le chemin source -> ... -> test. Si un pont passe par une
+classe "hub" (config, enum partage, utilitaire), c'est le signe d'une
+sur-selection a corriger (voir section suivante).
 
 == Mode RETRY (fix & retry)
 
@@ -175,6 +188,40 @@ Windows, aucune classe de JAR n'etait resolue (`getResource` renvoyait null) et
 la detection inter-modules ne fonctionnait pas. Le fix force l'usage de `/`.
 ====
 
+== Maitrise de la sur-selection (classes-hubs)
+
+L'analyse statique relie les classes par leurs dependances. Certaines classes
+tres partagees (enums de type, classes de configuration, utilitaires) sont
+referencees par des centaines d'autres et creent des "ponts" : modifier un type
+de base (ex: `TGPSPosition`) peut alors selectionner des centaines de tests sans
+rapport reel.
+
+Pour limiter ce phenomene, le graphe coupe certaines aretes (methode
+`Loadables.shouldExcludeEdge`). Sont coupees les aretes ENTRANTES vers :
+
+* les enums-hubs `.type.E*` (ex: `EClasse`), sauf enum interne a la meme classe ;
+* les classes utilitaires (`*Utils`), sauf si la source est elle-meme dans `.util(s)` ;
+* les libelles NLS (`.nls.`), constantes (`*Constantes`), builders (`*Builder`), alertes (`*Alerts`) ;
+* une liste explicite de hubs techniques connus (`HUB_CLASSES`) :
+`CommunProperties`, `GenericCommunProperties`, `HermesParameterParser`,
+`ResultSetReader`.
+
+IMPORTANT: Ces exclusions s'appliquent AUSSI aux aretes inter-modules (issues
+des JARs), pas seulement aux dependances locales. C'est essentiel : les ponts
+comme `TGPSPosition -> EClasse` arrivent par les JARs.
+
+[TIP]
+====
+Pour ajouter un hub : ouvrir `Loadables.java`, ajouter le FQN a `HUB_CLASSES`,
+rebuilder, relancer `init-graph`. Utiliser `debug-paths` pour identifier les
+hubs responsables d'une sur-selection.
+
+Compromis assume : couper ces aretes peut faire rater quelques tests (faux
+negatifs) en echange d'une selection bien plus ciblee. On NE coupe PAS les
+vraies dependances metier (ex: `ArcAdresse`, `PolygoneGeographique` qui
+contiennent reellement des positions GPS).
+====
+
 == Parametres importants
 
 Surchargeables via `-D`.
@@ -212,6 +259,14 @@ EXCLUDED_MODULES='!com.efluid:archi-js-ressources-a-copier,!com.efluid:archi-js-
 En resume : module 100% front -> `EXCLUDED_MODULES` ; module mixte Java+front -> `-Dskip.node=true`.
 
 Auto-skip:: Les modules de type `pom` (agregateurs) et ceux sans `src/test/java` sont ignores immediatement, sans cout.
+
+Cache jdeps mutualise:: Avec la detection inter-modules, chaque module analyse
+les JARs maison dont il depend. Sans mutualisation, un meme JAR (ex: `archi-jar`)
+etait re-analyse par jdeps dans chaque module qui en depend (x150). Le cache est
+desormais partage entre tous les modules (`scripts/starts/work/jdeps-cache`, via
+`-DgCache`) : chaque JAR n'est analyse qu'une fois. Gain mesure sur l'init
+complet : phase d'analyse de ~3 min a ~40 s. Le cache est purge a chaque
+`init-graph` (base saine), et reutilise par `run-tests` (rapide).
 
 Compilation deleguee au shell:: Le plugin ne recompile plus (`@Execute(TEST_COMPILE)` retire). La compilation est faite une seule fois par le script, et Surefire est invoque via le goal direct `surefire:test` (pas la phase `test`) pour ne pas relancer le cycle.
 
@@ -277,10 +332,19 @@ Module de type `pom` (agregateur). Gere par l'auto-skip ; si l'erreur apparait, 
 
 Verifier que `-Dmaven.compiler.useIncrementalCompilation=false` est bien dans le script et que le plugin est rebuilde. Un second build sans modification doit afficher `Nothing to compile` sur la quasi-totalite des modules.
 
+=== Un test sans rapport est selectionne (sur-selection)
+
+Lancer `debug-paths.sh <module> -DforClass=<ClasseModifiee>` pour voir le chemin
+qui relie la classe au test. Si le chemin passe par une classe-hub (config, enum
+partage, utilitaire), l'ajouter a `HUB_CLASSES` dans `Loadables.java`, rebuilder,
+relancer `init-graph`. Voir la section "Maitrise de la sur-selection".
+
 === Forcer le relancement de tous les tests
 
 `./init-graph.sh` supprime les `.starts/` : au run suivant, plus rien n'est considere comme modifie. Modifier une classe declenche alors la selection des tests affectes.
 
 == Versionning du debug-paths
 
-`DebugPathsMojo` affiche sa version en console et dans le fichier de sortie (constante `DEBUG_PATHS_VERSION`). Pratique pour confirmer qu'un rebuild a ete pris en compte.
+`DebugPathsMojo` affiche sa version en console et dans le fichier de sortie
+(constante `DEBUG_PATHS_VERSION`, actuellement v8). Pratique pour confirmer
+qu'un rebuild a bien ete pris en compte avant de relancer une analyse.
