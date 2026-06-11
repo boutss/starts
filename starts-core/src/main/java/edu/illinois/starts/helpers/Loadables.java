@@ -248,21 +248,76 @@ public class Loadables implements StartsConstants {
         return depMap;
     }
 
+    /**
+     * Coupe certaines aretes du graphe de dependances pour eviter les "ponts"
+     * qui relient artificiellement une classe a des centaines de tests
+     * (sur-selection). Typiquement les types-hubs (enums .type.E*), les
+     * classes utilitaires, les constantes, les builders, les libelles NLS.
+     *
+     * Choix assume : on accepte de potentiellement rater quelques tests
+     * (faux negatifs) en echange d'une selection bien plus ciblee et rapide.
+     */
     private static void exclusions(Map<String, Set<String>> depMap) {
-        depMap.forEach( (key, deps) -> {
-            boolean keyInTypePackage = key.contains(".type.");
-            boolean keyInUtilPackage = key.contains(".utils.") || key.contains(".util.");
-            deps.removeIf(dep -> !keyInTypePackage && dep.contains(".type.E"));
-            deps.removeIf(dep -> !keyInUtilPackage && dep.endsWith("Utils"));
-        });
+        depMap.forEach( (key, deps) ->
+                                deps.removeIf(dep -> shouldExcludeEdge(key, dep))
+        );
+    }
 
-        depMap.forEach( (key, deps) -> {
-            deps.removeIf( dep ->
-                                   dep.contains( ".nls." ) ||
-                                   dep.endsWith( "Constantes" ) ||
-                                   dep.endsWith( "Builder" ) ||
-                                   dep.endsWith( "Alerts" ) );
-        });
+    /**
+     * Hubs techniques connus : classes referencees par enormement d'autres et
+     * qui creent des "ponts" artificiels dans le graphe (sur-selection). Couper
+     * les aretes ENTRANTES vers ces classes evite qu'une modif d'un type de base
+     * (ex: TGPSPosition) ne selectionne des centaines de tests sans rapport.
+     *
+     * NB: on ne met PAS ici les vraies dependances metier comme ArcAdresse ou
+     * PolygoneGeographique (qui contiennent reellement des positions GPS) :
+     * leurs tests DOIVENT tourner si TGPSPosition change.
+     */
+    private static final Set<String> HUB_CLASSES = Set.of(
+            "com.hermes.arc.commun.property.CommunProperties",
+            "com.hermes.arc.commun.property.GenericCommunProperties",
+            "com.hermes.arc.commun.web.HermesParameterParser",
+            "com.efluid.framework.sql.convert.ResultSetReader"
+    );
+
+    /**
+     * Regle unique decidant si une arete source -> dep doit etre coupee.
+     * Appliquee a la fois aux dependances jdeps locales (depMap) ET aux aretes
+     * inter-modules ajoutees via extraEdges (sinon les ponts type EClasse, qui
+     * arrivent par les JARs, echappaient au filtre).
+     */
+    private static boolean shouldExcludeEdge(String source, String dep) {
+        // Hubs techniques explicites (config, parsing, SQL...).
+        if (HUB_CLASSES.contains(dep)) {
+            return true;
+        }
+        // Enums-hubs .type.E* : coupes meme si la source est dans .type.,
+        // sauf si dep est un type interne de la meme unite (Foo$EBar).
+        if (dep.contains(".type.E") && !isSameCompilationUnit(source, dep)) {
+            return true;
+        }
+        // Classes utilitaires, sauf si la source est elle-meme dans .util(s).
+        boolean sourceInUtil = source.contains(".utils.") || source.contains(".util.");
+        if (!sourceInUtil && dep.endsWith("Utils")) {
+            return true;
+        }
+        // Libelles NLS, constantes, builders, alerts : hubs classiques.
+        return dep.contains(".nls.")
+                || dep.endsWith("Constantes")
+                || dep.endsWith("Builder")
+                || dep.endsWith("Alerts");
+    }
+
+    /**
+     * Indique si deux FQN appartiennent a la meme unite de compilation
+     * (meme classe top-level), ex: Foo et Foo$Bar. Permet de garder les liens
+     * vers les enums internes tout en coupant les liens vers les enums-hubs
+     * d'autres unites.
+     */
+    private static boolean isSameCompilationUnit(String classA, String classB) {
+        String topA = classA.contains("$") ? classA.substring(0, classA.indexOf('$')) : classA;
+        String topB = classB.contains("$") ? classB.substring(0, classB.indexOf('$')) : classB;
+        return topA.equals(topB);
     }
 
     private void addEdgesToGraphBuilder(DirectedGraphBuilder<String> builder, List<String> edges) {
@@ -274,6 +329,11 @@ public class Loadables implements StartsConstants {
             }
             String src = parts[0].intern();
             String dest = parts[1].intern();
+            // Appliquer les memes exclusions que sur depMap : les aretes
+            // inter-modules (JARs) passent par ici et doivent aussi etre filtrees.
+            if (shouldExcludeEdge(src, dest)) {
+                continue;
+            }
             builder.addEdge(src, dest);
         }
     }

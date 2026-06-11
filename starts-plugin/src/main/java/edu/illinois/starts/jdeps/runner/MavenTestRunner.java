@@ -127,6 +127,8 @@ public class MavenTestRunner {
         // depuis le dernier run mais encore references dans deps.zlc /
         // selected-tests / failed-tests.txt). Evite "No tests matching" et les
         // faux echecs sur des tests fantomes.
+        report.log("  [v2-filtre] verification existence dans : "
+                           + project.getBuild().getTestOutputDirectory());
         List<String> existing = new ArrayList<>();
         List<String> missing  = new ArrayList<>();
         for (String simpleName : testClasses) {

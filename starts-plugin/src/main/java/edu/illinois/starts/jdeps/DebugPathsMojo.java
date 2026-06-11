@@ -58,7 +58,7 @@ public class DebugPathsMojo extends DiffMojo implements StartsConstants {
      * pour verifier facilement que la version buildee correspond bien a celle
      * attendue (affiche en console et en haut du fichier de sortie).
      */
-    private static final String DEBUG_PATHS_VERSION = "v6 - maxPathsPerClass=1000 (2026-06-01)";
+    private static final String DEBUG_PATHS_VERSION = "v8 - forClass-forTest dans tout le graphe, inter-module (2026-06-10)";
 
     @Override
     public void execute() throws MojoExecutionException {
@@ -72,12 +72,20 @@ public class DebugPathsMojo extends DiffMojo implements StartsConstants {
         logger.log(Level.INFO, "==================================================");
 
         // -- 1. Calcul des classes modifiees et tests affectes -----------------
+        // (La compilation du reactor est faite en amont par le script shell.)
         Pair<Set<String>, Set<String>> data = computeChangeData(false);
         Set<String> nonAffected         = data.getKey();
         Set<String> changedClassesUrls  = data.getValue();
 
-        if (changedClassesUrls.isEmpty()) {
-            logger.log(Level.INFO, "Aucune classe modifiee detectee. Rien a analyser.");
+        boolean hasForClass = forClass != null && !forClass.isEmpty();
+        boolean hasForTest  = forTest != null && !forTest.isEmpty();
+        // Si aucun filtre explicite et aucune classe modifiee -> rien a faire.
+        // Mais si forClass/forTest est fourni, on analyse le graphe complet
+        // (utile pour tracer une classe de JAR inter-module, meme non modifiee,
+        // ou apres que les checksums ont ete rafraichis par un run precedent).
+        if (changedClassesUrls.isEmpty() && !hasForClass && !hasForTest) {
+            logger.log(Level.INFO, "Aucune classe modifiee detectee et aucun filtre "
+                    + "forClass/forTest. Rien a analyser.");
             return;
         }
 
@@ -117,19 +125,28 @@ public class DebugPathsMojo extends DiffMojo implements StartsConstants {
         logger.log(Level.INFO, "  Tests affectes    : " + affectedTests.size());
 
         // -- 3. Filtrer selon -DforClass / -DforTest ---------------------------
+        // Par defaut : sources = classes modifiees, targets = tests affectes.
+        // Mais si forClass/forTest est fourni, on cherche dans TOUT le graphe
+        // (toutes les classes / tous les tests connus), pas seulement les
+        // modifiees/affectees. Cela permet de tracer une classe inter-module
+        // (dans un JAR) meme si elle n'apparait pas comme modifiee ce run-ci.
+        java.util.Set<String> allVertices = new java.util.HashSet<>(graph.getVertices());
+
         Set<String> sources = changedClasses;
         Set<String> targets = affectedTests;
 
-        boolean hasFor = forClass != null && !forClass.isEmpty();
-        boolean hasTest = forTest != null && !forTest.isEmpty();
-
-        if (hasFor) {
-            sources = filterByMatch(changedClasses, forClass);
-            logger.log(Level.INFO, "  Filtre forClass='" + forClass + "' -> " + sources.size() + " classe(s)");
+        if (hasForClass) {
+            // Chercher dans tout le graphe, pas seulement changedClasses
+            sources = filterByMatch(allVertices, forClass);
+            logger.log(Level.INFO, "  Filtre forClass='" + forClass + "' -> "
+                    + sources.size() + " classe(s) (recherche dans tout le graphe)");
         }
-        if (hasTest) {
-            targets = filterByMatch(affectedTests, forTest);
-            logger.log(Level.INFO, "  Filtre forTest='" + forTest + "' -> " + targets.size() + " test(s)");
+        if (hasForTest) {
+            // Chercher parmi tous les tests connus
+            java.util.Set<String> allTests = new java.util.LinkedHashSet<>(allTestsList);
+            targets = filterByMatch(allTests, forTest);
+            logger.log(Level.INFO, "  Filtre forTest='" + forTest + "' -> "
+                    + targets.size() + " test(s) (recherche dans tous les tests)");
         }
 
         if (sources.isEmpty() || targets.isEmpty()) {
