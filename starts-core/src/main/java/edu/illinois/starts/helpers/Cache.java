@@ -35,10 +35,12 @@ public class Cache implements StartsConstants {
     }
 
     public List<String> loadM2EdgesFromCache(String pathString) {
-        if (!jdepsCache.exists()) {
-            if (!jdepsCache.mkdir()) {
-                throw new RuntimeException("I could not create the jdeps cache: " + jdepsCache.getAbsolutePath());
-            }
+        // mkdirs() (et non mkdir()) cree toute l'arborescence parente si besoin
+        // (ex: scripts/starts/work/jdeps-cache). Le double check exists() gere
+        // le cas ou un autre module l'a cree entre-temps (cache mutualise).
+        if (!jdepsCache.exists() && !jdepsCache.mkdirs() && !jdepsCache.exists()) {
+            throw new RuntimeException("I could not create the jdeps cache: "
+                                               + jdepsCache.getAbsolutePath());
         }
         //1. get jars from sfClassPath
         cpJars = getJarsFromCP(pathString);
